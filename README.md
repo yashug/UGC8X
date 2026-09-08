@@ -17,8 +17,8 @@ Everything else is a normal conversation.
 | M1 — chat, tool routing, job card, BYOK header | **done** |
 | M2 — URL → brief → script streamed into thread | **done** |
 | M3 — footage, voiceover, local Remotion render | **done** |
-| M1b — BYOK settings sheet, encrypted storage | next |
-| M4 — GitHub Actions renderer → public URL | not started |
+| M1b — BYOK settings sheet, encrypted storage | **done** |
+| M4 — GitHub Actions renderer → public URL | next |
 | M5 — Vercel + Neon + Inngest | not started |
 | M6 — design pass | not started |
 
@@ -75,6 +75,12 @@ ratio is read from the file header rather than assumed.
 image it found and put a stock photo of a man at a harbour under the words
 "100k+ 5-star ratings". Images now have to look like the product to be shown, and
 anything below that bar falls through to type.
+
+**Keys are checked before they are stored, and we say when we couldn't.** A bad
+key should fail at paste time, not two minutes into a render. But Pexels answers
+a search identically with a valid key, a garbage key, or no key at all — an early
+version happily accepted the string `obviously-not-a-real-key`. Validation now
+reports whether it actually verified, and the UI says so.
 
 **Proof points are copied, never invented.** The brief prompt forbids inventing a
 statistic, and the script prompt forbids using one that is not in the brief. A

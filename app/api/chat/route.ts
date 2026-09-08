@@ -3,6 +3,8 @@ import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } 
 import type { ChatMessage } from "@/lib/ai/chat-message";
 import { createChatStream } from "@/lib/ai/chat";
 import { NO_KEY_MESSAGE } from "@/lib/ai/prompts";
+import { getSessionId } from "@/lib/keys/session";
+import { readKeys } from "@/lib/keys/store";
 import { readUserKeys, redact, resolveKeys } from "@/lib/providers/keys";
 import { chatModel, scriptModel, NoLlmKeyError } from "@/lib/providers/llm";
 
@@ -10,7 +12,15 @@ export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const body = (await req.json()) as { messages: UIMessage[] };
-  const resolved = resolveKeys(readUserKeys(req));
+
+  // Session-stored keys are the real source: the render runs long after this
+  // request ends, so a key must be readable server-side. The header remains as a
+  // fallback for callers that have not saved anything.
+  const sessionId = await getSessionId();
+  const resolved = resolveKeys({
+    ...readUserKeys(req),
+    ...(sessionId ? readKeys(sessionId) : {}),
+  });
 
   let llm;
   try {

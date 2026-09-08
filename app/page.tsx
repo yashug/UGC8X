@@ -5,6 +5,11 @@ import { DefaultChatTransport } from "ai";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Composer } from "@/components/chat/composer";
+import {
+  SettingsSheet,
+  fetchCapabilities,
+  type Row as CapabilityRow,
+} from "@/components/settings/settings-sheet";
 import { EmptyState } from "@/components/chat/empty-state";
 import { JobCard } from "@/components/chat/job-card";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -15,6 +20,15 @@ const KEYS_STORAGE = "ugc8x-keys";
 
 export default function Page() {
   const [input, setInput] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [capabilities, setCapabilities] = useState<CapabilityRow[] | null>(null);
+
+  // Opening is the event that loads the data, so the sheet needs no effect.
+  function openSettings() {
+    setSettingsOpen(true);
+    setCapabilities(null);
+    void fetchCapabilities().then(setCapabilities);
+  }
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const transport = useMemo(
@@ -56,8 +70,29 @@ export default function Page() {
         <span className="font-mono text-[13px] font-medium tracking-tight text-ink">
           UGC8X
         </span>
-        <ThemeToggle />
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={openSettings}
+            aria-label="Your API keys"
+            className="grid size-8 place-items-center rounded-md text-muted transition-colors hover:bg-sunk hover:text-ink"
+          >
+            <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 5 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9.5a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+            </svg>
+          </button>
+          <ThemeToggle />
+        </div>
       </header>
+
+      {settingsOpen ? (
+        <SettingsSheet
+          rows={capabilities}
+          onRowsChange={setCapabilities}
+          onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
 
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[46rem] px-4">
@@ -121,7 +156,15 @@ export default function Page() {
             busy={busy}
           />
           <p className="mt-2 text-center text-[11px] text-faint">
-            Free lane runs on Gemini Flash. Add your own keys for better output.
+            Runs on a shared free-tier key.{" "}
+            <button
+              type="button"
+              onClick={openSettings}
+              className="underline underline-offset-2 hover:text-muted"
+            >
+              Add your own
+            </button>{" "}
+            for better output.
           </p>
         </div>
       </div>

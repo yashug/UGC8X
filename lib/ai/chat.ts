@@ -7,6 +7,7 @@ import {
   toUIMessageStream,
   type LanguageModel,
   type UIMessage,
+  type UIMessageStreamWriter,
 } from "ai";
 import { z } from "zod";
 
@@ -27,6 +28,15 @@ import { hostOf, normalizeUrl } from "./url";
  * deliberately truthful — it must never claim a video exists.
  */
 
+function lastUserMessageText(messages: UIMessage[]): string {
+  const last = [...messages].reverse().find((message) => message.role === "user");
+  if (!last) return "";
+  return last.parts
+    .filter((part) => part.type === "text")
+    .map((part) => (part as { text: string }).text)
+    .join(" ");
+}
+
 export type ChatStreamOptions = {
   model: LanguageModel;
   messages: UIMessage[];
@@ -39,6 +49,120 @@ export type ChatStreamOptions = {
   /** Brief and script generation model; separate from the chat model on purpose. */
   scriptModel?: LanguageModel;
 };
+
+
+type StartJobOptions = {
+  writer: UIMessageStreamWriter<ChatMessage>;
+  model: LanguageModel;
+  keys?: ResolvedKeys;
+  runPipeline: boolean;
+  url: string;
+  productName?: string;
+  angle?: string;
+};
+
+/**
+ * Opens a render job and streams its card. Shared by the tool and by the guard
+ * below, so there is exactly one path that can start a render.
+ */
+async function startVideoJob({
+  writer,
+  model,
+  keys,
+  runPipeline,
+  url,
+  productName,
+  angle,
+}: StartJobOptions) {
+  const normalized = normalizeUrl(url);
+
+  if (!normalized) {
+    return {
+      accepted: false,
+      reason: `"${url}" is not a URL I can read. Ask the user for the product's website.`,
+    };
+  }
+
+  const jobId = crypto.randomUUID();
+  const job: JobData = {
+    jobId,
+    url: normalized,
+    productName: productName ?? hostOf(normalized),
+    status: "running",
+    stages: initialStages(),
+  };
+
+  // A data part, not text — so the same id can be rewritten as the pipeline
+  // advances, updating the card in place.
+  writer.write({ type: "data-job", id: jobId, data: job });
+
+  if (!runPipeline) {
+    return { accepted: true, jobId, url: normalized, status: "queued", note: "Pipeline disabled in this environment." };
+  }
+
+  const { job: finished, site } = await runBriefPipeline({
+    job,
+    model,
+    angle,
+    onUpdate: (update) => writer.write({ type: "data-job", id: jobId, data: update }),
+  });
+
+  if (finished.status === "failed") {
+    return {
+      accepted: false,
+      jobId,
+      reason: finished.error,
+      note: "Relay this to the user in one short sentence. Do not retry the tool.",
+    };
+  }
+
+  // Rendering takes minutes, far longer than this turn may stay open, so it runs
+  // detached and reports into the job store for the card to poll.
+  putJob(finished);
+  if (site && keys) {
+    void runRenderJob({ job: finished, keys, site });
+  }
+
+  return {
+    accepted: true,
+    jobId,
+    url: normalized,
+    product: finished.brief?.name,
+    oneLiner: finished.brief?.oneLiner,
+    scenes: finished.script?.scenes.length,
+    durationSec: finished.script?.totalDurationSec,
+    note: "The brief and script are already shown to the user in the job card, which now renders the video and updates itself — do not repeat them and do not list the scenes. Say in one short sentence that the script is ready and the video is rendering. Do NOT claim the video is finished and never invent a URL.",
+  };
+}
+
+/**
+ * Catches the model claiming to act without acting.
+ *
+ * Tool calling is not perfectly reliable: on one run the model replied "Working on
+ * that for you!" to a message containing a URL and never called the tool, leaving
+ * the user waiting for a video that was never going to arrive. That specific
+ * contradiction — a promise of a video, no tool call, and a URL sitting right
+ * there in the message — is detectable, so it is repaired rather than shipped.
+ *
+ * This is not a classifier reinstated by the back door: it never decides that an
+ * ordinary message should render. It only fires when the model has already said
+ * it is doing the thing.
+ */
+const CLAIMED_ACTION =
+  /\b(on it|working on|generating|creating|making|i'?ll (make|create|generate)|let me (make|create|generate)|get(ting)? (that|it) (made|going))\b/i;
+
+export function findRenderPromise(
+  assistantText: string,
+  lastUserText: string,
+): string | null {
+  if (!CLAIMED_ACTION.test(assistantText)) return null;
+
+  const candidate = lastUserText.match(
+    /\b((?:https?:\/\/)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+(?:\/[^\s]*)?)/i,
+  )?.[1];
+
+  return candidate && normalizeUrl(candidate) ? candidate : null;
+}
 
 export function createChatStream({
   model,
@@ -72,75 +196,8 @@ export function createChatStream({
                 .optional()
                 .describe("Any angle or tone the user asked for"),
             }),
-            execute: async ({ url, productName, angle }) => {
-              const normalized = normalizeUrl(url);
-
-              if (!normalized) {
-                return {
-                  accepted: false,
-                  reason: `"${url}" is not a URL I can read. Ask the user for the product's website.`,
-                };
-              }
-
-              const jobId = crypto.randomUUID();
-              const job: JobData = {
-                jobId,
-                url: normalized,
-                productName: productName ?? hostOf(normalized),
-                status: "running",
-                stages: initialStages(),
-              };
-
-              // A data part, not text — so the same id can be rewritten as the
-              // pipeline advances, updating the card in place.
-              writer.write({ type: "data-job", id: jobId, data: job });
-
-              if (!runPipeline) {
-                return {
-                  accepted: true,
-                  jobId,
-                  url: normalized,
-                  status: "queued",
-                  note: "Pipeline disabled in this environment.",
-                };
-              }
-
-              const { job: finished, site } = await runBriefPipeline({
-                job,
-                model: scriptModel ?? model,
-                angle,
-                onUpdate: (update) =>
-                  writer.write({ type: "data-job", id: jobId, data: update }),
-              });
-
-              if (finished.status === "failed") {
-                return {
-                  accepted: false,
-                  jobId,
-                  reason: finished.error,
-                  note: "Relay this to the user in one short sentence. Do not retry the tool.",
-                };
-              }
-
-              // Rendering takes minutes, far longer than this turn may stay
-              // open, so it runs detached and reports into the job store for the
-              // card to poll. Deliberately not awaited.
-              putJob(finished);
-              if (site && keys) {
-                void runRenderJob({ job: finished, keys, site });
-              }
-
-              return {
-                accepted: true,
-                jobId,
-                url: normalized,
-                product: finished.brief?.name,
-                oneLiner: finished.brief?.oneLiner,
-                scenes: finished.script?.scenes.length,
-                durationSec: finished.script?.totalDurationSec,
-                note: "The brief and script are already shown to the user in the job card, which now renders the video and updates itself — do not repeat them and do not list the scenes. Say in one short sentence that the script is ready and the video is rendering. Do NOT claim the video is finished and never invent a URL.",
-              };
-            },
+            execute: async ({ url, productName, angle }) =>
+              startVideoJob({ writer, model: scriptModel ?? model, keys, runPipeline, url, productName, angle }),
           }),
         },
       });
@@ -154,6 +211,23 @@ export function createChatStream({
           onError: (error) => sanitizeError(describeError(error)),
         }),
       );
+
+      const [toolCalls, assistantText] = await Promise.all([result.toolCalls, result.text]);
+
+      if (toolCalls.length === 0) {
+        const lastUserText = lastUserMessageText(messages);
+        const promised = findRenderPromise(assistantText, lastUserText);
+
+        if (promised) {
+          await startVideoJob({
+            writer,
+            model: scriptModel ?? model,
+            keys,
+            runPipeline,
+            url: promised,
+          });
+        }
+      }
     },
     onError: (error) => sanitizeError(describeError(error)),
   });

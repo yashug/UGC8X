@@ -61,6 +61,16 @@ The runner never receives a provider API key. Everything that needs one — the
 voiceover especially — is produced by the app and uploaded to R2 first, so the
 payload the runner sees is nothing but URLs.
 
+## Known limitations
+
+- Sites whose `og:image` is a logo rather than a screenshot produce a logo-heavy
+  video. Linear is a good example. The fix is capturing the live site with a
+  headless browser, which is the upgraded lane for product shots.
+- Videos run ~30s against a 25s target, because real speech is slower than the
+  script's estimate. The script prompt should ask for tighter lines.
+- One Gemini voice. ElevenLabs would bring word timings and karaoke captions.
+- M4 has never been run end to end. See above.
+
 ## Design notes
 
 **Routing is tool-use, not a classifier.** One model call decides chat-vs-render.
@@ -106,6 +116,14 @@ reports whether it actually verified, and the UI says so.
 that marks a job finished and attaches a video URL, so every request must carry an
 HMAC of its own body. Without it, anyone could point your finished video at their
 own file. Verified with a constant-time compare.
+
+**A guard catches the model claiming to act without acting.** Tool calling is not
+perfectly reliable: on one run the model answered a message containing a URL with
+"Working on that for you!" and never called the tool, leaving the user waiting for
+a video that would never arrive. That contradiction is detectable — a promise, no
+tool call, and a URL sitting in the message — so it is repaired. It never decides
+that an ordinary message should render; it only fires once the model has already
+said it is doing the thing.
 
 **Proof points are copied, never invented.** The brief prompt forbids inventing a
 statistic, and the script prompt forbids using one that is not in the brief. A

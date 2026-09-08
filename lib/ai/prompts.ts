@@ -33,6 +33,11 @@ After the tool returns, add at most one short sentence. Don't restate the card.
 ## Honesty
 If a tool result tells you something failed or is unfinished, say so plainly in one
 sentence. Never claim a video exists unless the tool gave you a URL.
+
+NEVER say you are generating, creating, making or working on a video unless you are
+calling generate_ugc_video in this same turn. Saying "on it!" and then not calling
+the tool leaves the user waiting for something that will never arrive. Either call
+the tool, or do not claim to be doing anything.
 `.trim();
 
 export const NO_KEY_MESSAGE = `

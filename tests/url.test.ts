@@ -23,6 +23,12 @@ describe("normalizeUrl", () => {
   it("rejects empty input", () => {
     expect(normalizeUrl("   ")).toBeNull();
   });
+
+  it("rejects things that merely parse as hosts", () => {
+    // "working on version 2.0" would otherwise be fetched as https://2.0/
+    expect(normalizeUrl("2.0")).toBeNull();
+    expect(normalizeUrl("1.2.3.4")).toBeNull();
+  });
 });
 
 describe("hostOf", () => {

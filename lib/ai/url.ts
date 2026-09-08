@@ -16,6 +16,11 @@ export function normalizeUrl(input: string): string | null {
   if (!url.hostname.includes(".")) return null;
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
 
+  // The last label has to look like a real TLD. Without this, "version 2.0"
+  // parses cleanly as the host "2.0" and would be fetched as a product site.
+  const tld = url.hostname.split(".").pop() ?? "";
+  if (!/^[a-z]{2,}$/i.test(tld)) return null;
+
   return url.toString();
 }
 

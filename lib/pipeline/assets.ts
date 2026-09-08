@@ -98,7 +98,12 @@ export function voiceWarnings(voice: {
   ];
 }
 
-type SpeechOutcome = { voice: Voiceover | null; reason?: string };
+type SpeechOutcome = {
+  voice: Voiceover | null;
+  reason?: string;
+  /** True when retrying other scenes cannot help — an exhausted quota or no key. */
+  terminal?: boolean;
+};
 
 /**
  * Two attempts, with a pause between them, because the common failure is a
@@ -111,21 +116,27 @@ async function speakWithRetry(
   attempts = 2,
 ): Promise<SpeechOutcome> {
   let reason: string | undefined;
+  let terminal = false;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       return { voice: await generateVoiceover(keys, text) };
     } catch (error) {
       if (error instanceof NoVoiceKeyError) {
-        return { voice: null, reason: "no key for text to speech" };
+        return { voice: null, reason: "no key for text to speech", terminal: true };
       }
       const message = error instanceof Error ? error.message : String(error);
-      reason = /quota|rate.?limit|429/i.test(message)
+      const quota = /quota|rate.?limit|429/i.test(message);
+      reason = quota
         ? "the text-to-speech quota is exhausted"
         : "text to speech failed";
+      if (quota) terminal = true;
 
       // Never silent: a swallowed error here is what shipped a silent video.
       console.warn(`[ugc8x] voiceover attempt ${attempt + 1} failed: ${message.slice(0, 160)}`);
+
+      // Every TTS model already refused on quota grounds; waiting will not help.
+      if (terminal) break;
 
       if (attempt < attempts - 1) {
         await new Promise((resolve) => setTimeout(resolve, 2500));
@@ -133,7 +144,7 @@ async function speakWithRetry(
     }
   }
 
-  return { voice: null, reason };
+  return { voice: null, reason, terminal };
 }
 
 export async function buildAssets({
@@ -157,15 +168,29 @@ export async function buildAssets({
   // the serverless request budget now that this runs inside the chat turn.
   const voices: (Voiceover | null)[] = [];
   let voiceReason: string | undefined;
+  let giveUp = false;
 
   for (let i = 0; i < script.scenes.length; i += SPEECH_CONCURRENCY) {
     const batch = script.scenes.slice(i, i + SPEECH_CONCURRENCY);
+
+    // An exhausted quota will not recover inside one request, and this whole
+    // pipeline runs inside a request with a timeout. Retrying every remaining
+    // scene against a dead quota once cost 117 seconds and produced nothing, so
+    // the first quota failure stops the rest.
+    if (giveUp) {
+      voices.push(...batch.map(() => null));
+      continue;
+    }
+
     const outcomes = await Promise.all(
       batch.map((scene) => speakWithRetry(keys, scene.voiceover)),
     );
     for (const outcome of outcomes) {
       voices.push(outcome.voice);
-      if (!outcome.voice) voiceReason ??= outcome.reason;
+      if (!outcome.voice) {
+        voiceReason ??= outcome.reason;
+        if (outcome.terminal) giveUp = true;
+      }
     }
   }
 

@@ -1,5 +1,6 @@
-import { Output, generateText, type LanguageModel } from "ai";
+import type { LanguageModel } from "ai";
 
+import { generateObjectWithFallback } from "./generate";
 import { videoScriptSchema } from "./schemas";
 import type { ProductBrief, VideoScript } from "./types";
 
@@ -25,14 +26,14 @@ Rules:
 `.trim();
 
 export async function generateScript(
-  model: LanguageModel,
+  models: LanguageModel[],
   brief: ProductBrief,
   angle?: string,
 ): Promise<VideoScript> {
-  const { output } = await generateText({
-    model,
+  const output = await generateObjectWithFallback({
+    models,
     instructions: INSTRUCTIONS,
-    output: Output.object({ schema: videoScriptSchema }),
+    schema: videoScriptSchema,
     prompt: [
       `Product: ${brief.name}`,
       `What it is: ${brief.oneLiner}`,

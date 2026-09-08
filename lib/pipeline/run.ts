@@ -15,8 +15,11 @@ export type PipelineUpdate = (job: JobData) => void;
 
 export type PipelineOptions = {
   job: JobData;
-  /** The scriptwriting model, which is not the same one that routes chat. */
-  model: LanguageModel;
+  /**
+   * Scriptwriting models, best first. Plural because the free tier meters per
+   * model and one video can exhaust a bucket partway through.
+   */
+  models: LanguageModel[];
   angle?: string;
   keys: ResolvedKeys;
   onUpdate: PipelineUpdate;
@@ -42,7 +45,7 @@ export type PipelineResult = {
 
 export async function runVideoPipeline({
   job,
-  model,
+  models,
   angle,
   keys,
   onUpdate,
@@ -91,12 +94,12 @@ export async function runVideoPipeline({
     );
 
     setStage("brief", "active");
-    const brief = await generateBrief(model, extract);
+    const brief = await generateBrief(models, extract);
     current = { ...current, brief, productName: brief.name };
     setStage("brief", "done", brief.oneLiner);
 
     setStage("script", "active");
-    const script = await generateScript(model, brief, angle);
+    const script = await generateScript(models, brief, angle);
     current = { ...current, script };
     setStage("script", "done", `${script.scenes.length} scenes, ${script.totalDurationSec}s`);
 

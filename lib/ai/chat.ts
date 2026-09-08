@@ -44,14 +44,14 @@ export type ChatStreamOptions = {
   runPipeline?: boolean;
   /** Provider keys for the asset stage. Absent keys degrade, they do not fail. */
   keys?: ResolvedKeys;
-  /** Brief and script generation model; separate from the chat model on purpose. */
-  scriptModel?: LanguageModel;
+  /** Brief and script models, best first; separate from the chat model on purpose. */
+  scriptModels?: LanguageModel[];
 };
 
 
 type StartJobOptions = {
   writer: UIMessageStreamWriter<ChatMessage>;
-  model: LanguageModel;
+  models: LanguageModel[];
   keys?: ResolvedKeys;
   runPipeline: boolean;
   url: string;
@@ -65,7 +65,7 @@ type StartJobOptions = {
  */
 async function startVideoJob({
   writer,
-  model,
+  models,
   keys,
   runPipeline,
   url,
@@ -100,7 +100,7 @@ async function startVideoJob({
 
   const { job: finished } = await runVideoPipeline({
     job,
-    model,
+    models,
     angle,
     keys: keys ?? resolveKeys(),
     onUpdate: (update) => writer.write({ type: "data-job", id: jobId, data: update }),
@@ -162,7 +162,7 @@ export function createChatStream({
   sanitizeError = (message) => message,
   runPipeline = true,
   keys,
-  scriptModel,
+  scriptModels,
 }: ChatStreamOptions) {
   return createUIMessageStream<ChatMessage>({
     execute: async ({ writer }) => {
@@ -189,7 +189,15 @@ export function createChatStream({
                 .describe("Any angle or tone the user asked for"),
             }),
             execute: async ({ url, productName, angle }) =>
-              startVideoJob({ writer, model: scriptModel ?? model, keys, runPipeline, url, productName, angle }),
+              startVideoJob({
+                writer,
+                models: scriptModels ?? [model],
+                keys,
+                runPipeline,
+                url,
+                productName,
+                angle,
+              }),
           }),
         },
       });
@@ -213,7 +221,7 @@ export function createChatStream({
         if (promised) {
           await startVideoJob({
             writer,
-            model: scriptModel ?? model,
+            models: scriptModels ?? [model],
             keys,
             runPipeline,
             url: promised,

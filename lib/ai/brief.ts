@@ -1,6 +1,7 @@
-import { Output, generateText, type LanguageModel } from "ai";
+import type { LanguageModel } from "ai";
 
 import type { SiteExtract } from "@/lib/product/extract";
+import { generateObjectWithFallback } from "./generate";
 import { productBriefSchema } from "./schemas";
 import type { ProductBrief } from "./types";
 
@@ -18,13 +19,13 @@ Rules that matter:
 `.trim();
 
 export async function generateBrief(
-  model: LanguageModel,
+  models: LanguageModel[],
   site: SiteExtract,
 ): Promise<ProductBrief> {
-  const { output } = await generateText({
-    model,
+  const output = await generateObjectWithFallback({
+    models,
     instructions: INSTRUCTIONS,
-    output: Output.object({ schema: productBriefSchema }),
+    schema: productBriefSchema,
     prompt: [
       `URL: ${site.url}`,
       `Title: ${site.title}`,

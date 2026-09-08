@@ -18,6 +18,12 @@ import type { ResolvedKeys } from "./keys";
  *
  * (gemini-2.5-flash is not an option: it is closed to new keys.)
  */
+/** Tried in order when the one before it runs out of free quota. */
+export const GOOGLE_SCRIPT_FALLBACKS = [
+  "gemini-3.1-flash-lite-preview",
+  "gemini-3.5-flash-lite",
+];
+
 export const MODELS = {
   googleChat: process.env.GOOGLE_CHAT_MODEL ?? "gemini-3.5-flash-lite",
   googleScript: process.env.GOOGLE_SCRIPT_MODEL ?? "gemini-3.6-flash",
@@ -58,3 +64,20 @@ function pick(resolved: ResolvedKeys, kind: "chat" | "script"): LlmChoice {
 
 export const chatModel = (resolved: ResolvedKeys) => pick(resolved, "chat");
 export const scriptModel = (resolved: ResolvedKeys) => pick(resolved, "script");
+
+/**
+ * The scriptwriting model plus its fallbacks, best first. Anthropic keys get a
+ * single entry: paid quota does not run out mid-video the way the free tier does.
+ */
+export function scriptModels(resolved: ResolvedKeys): LanguageModel[] {
+  const primary = scriptModel(resolved);
+  if (primary.provider === "anthropic") return [primary.model];
+
+  const google = createGoogleGenerativeAI({ apiKey: resolved.keys.google! });
+  return [
+    primary.model,
+    ...GOOGLE_SCRIPT_FALLBACKS.filter((id) => id !== primary.modelId).map((id) =>
+      google(id),
+    ),
+  ];
+}

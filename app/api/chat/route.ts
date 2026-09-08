@@ -4,7 +4,7 @@ import type { ChatMessage } from "@/lib/ai/chat-message";
 import { createChatStream } from "@/lib/ai/chat";
 import { NO_KEY_MESSAGE } from "@/lib/ai/prompts";
 import { readUserKeys, redact, resolveKeys } from "@/lib/providers/keys";
-import { chatModel, scriptModel, NoLlmKeyError } from "@/lib/providers/llm";
+import { chatModel, scriptModels, NoLlmKeyError } from "@/lib/providers/llm";
 
 /**
  * The whole pipeline — read the site, write the brief and script, generate the
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
       model: llm.model,
       messages: body.messages,
       keys: resolved,
-      scriptModel: scriptModel(resolved).model,
+      scriptModels: scriptModels(resolved),
       sanitizeError: (message) => redact(message, resolved.keys),
     }),
   });

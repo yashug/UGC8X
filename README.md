@@ -70,10 +70,10 @@ Optional: `ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY`, `FAL_KEY` upgrade individua
 capabilities. Anyone can also paste their own keys in Settings, which stay in
 their browser.
 
-**On plan limits.** The whole pipeline runs inside one request, so it needs the
-function to live for roughly half a minute. Vercel Hobby caps a function at 60s,
-which fits but is not generous; if renders start timing out, Pro with fluid
-compute lifts the ceiling. The bigger practical limit is Gemini's free tier —
+**On plan limits.** The whole pipeline runs inside one request. Measured at 39s
+in the worst case observed (every voiceover refused) and roughly the same when
+speech succeeds, against Vercel Hobby's 60s function cap. It fits, but not by
+much — if you see timeouts, Pro with fluid compute lifts the ceiling. The bigger practical limit is Gemini's free tier —
 a shared key is metered per minute and per day, so a public deployment will hit
 it. That is exactly what the BYOK settings sheet is for.
 
@@ -154,10 +154,17 @@ video with no log line, no warning and nothing said to the user. Failures are no
 retried, reported on the card, and logged. Speech is also generated one scene at a
 time rather than five at once, since concurrency was what tripped the rate limit.
 
-**Free-tier quota is metered per model, so the pipeline spreads across models.**
-Chat routing and scriptwriting use different Gemini models; text-to-speech falls
-through a list. `gemini-2.5-flash-preview-tts` allows ten requests a day and one
-video costs five, so a single model meant two videos and then silence.
+**Free-tier quota is metered per model, so the pipeline spreads across models and
+falls through them.** Chat routing and scriptwriting use different Gemini models,
+and both scriptwriting and speech try a list in order, moving on when one reports
+an exhausted quota. `gemini-2.5-flash-preview-tts` allows ten requests a day and
+one video costs five, so a single model meant two videos and then silence. A live
+run has already been rescued twice by this.
+
+**A dead quota fails fast rather than burning the request budget.** Retrying every
+remaining scene against an exhausted quota once took 117 seconds and produced
+nothing — nearly twice the serverless timeout. The first quota refusal now stops
+the rest, which brought the same run down to 39 seconds.
 
 **Proof points are copied, never invented.** The brief prompt forbids inventing a
 statistic, and the script prompt forbids using one that is not in the brief. A

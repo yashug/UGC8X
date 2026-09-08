@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sys
+import time
 
 AUTHOR = "yashug"
 TOOL = "claude-code"
@@ -86,12 +87,12 @@ def last_model(rows):
 
 def final_response(rows):
     """
-    The final assistant text of the turn: walk backwards from the end of the
-    transcript collecting assistant text blocks, and stop at the first tool call
-    or user/tool-result row. That boundary is what separates the final answer
-    from the intermediate steps.
+    The final assistant text of the turn, plus the timestamp of the newest row it
+    came from. Walk backwards from the end collecting assistant text blocks and
+    stop at the first tool call or user/tool-result row: that boundary is what
+    separates the final answer from the intermediate steps.
     """
-    parts = []
+    parts, newest = [], ""
     for row in reversed(rows):
         rtype = row.get("type")
         if row.get("isSidechain"):
@@ -99,14 +100,33 @@ def final_response(rows):
         if rtype == "user":
             break                         # real prompt or a tool_result: turn boundary
         if rtype != "assistant":
-            continue                      # attachment / ai-title / bookkeeping rows
+            continue                      # attachment / system / bookkeeping rows
         bs = blocks(row)
         if any(b.get("type") == "tool_use" for b in bs):
             break                         # anything before a tool call is intermediate
         for b in bs:
             if b.get("type") == "text" and b.get("text", "").strip():
                 parts.append(b["text"].strip())
-    return "\n\n".join(reversed(parts)).strip()
+                newest = max(newest, row.get("timestamp") or "")
+    return "\n\n".join(reversed(parts)).strip(), newest
+
+
+def await_response(transcript_path, floor_ts, budget=12.0):
+    """
+    The Stop hook can fire before Claude Code has flushed the final assistant
+    message to the transcript, which produced empty captures on the first run.
+    Poll until a response newer than floor_ts shows up, or the budget runs out.
+    """
+    deadline = time.time() + budget
+    text, ts = "", ""
+    while True:
+        rows = read_transcript(transcript_path)
+        text, ts = final_response(rows)
+        if text and (not floor_ts or ts > floor_ts):
+            return text, ts, rows
+        if time.time() >= deadline:
+            return text, ts, rows
+        time.sleep(0.25)
 
 
 def session_file(session_id):
@@ -193,10 +213,46 @@ def resolve_pending_model(path, model):
         f.write(text)
 
 
+AUTO_PROMPT_MARKERS = ("<task-notification>", "<system-reminder>")
+
+
+def is_auto_injected(prompt):
+    """
+    UserPromptSubmit also fires for turns the harness starts on its own - a
+    background agent finishing, for instance. Those are not something a human
+    asked, so they are not logged as prompts; the text they produce is logged as
+    a continuation of the prompt that actually caused it.
+    """
+    return prompt.lstrip().startswith(AUTO_PROMPT_MARKERS)
+
+
+def state_path():
+    # Internal bookkeeping only - kept out of .agent-logs so that directory
+    # holds nothing but the committed logs themselves.
+    return os.path.join(repo_root(), ".claude", "hooks", ".capture-state.json")
+
+
+def get_state():
+    try:
+        with open(state_path()) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def set_state(session_id, key, value):
+    st = get_state()
+    st.setdefault(session_id, {})[key] = value
+    with open(state_path(), "w") as f:
+        json.dump(st, f, indent=2)
+
+
 def mode_prompt(payload):
     session_id = payload.get("session_id") or "unknown-session"
     prompt = payload.get("prompt")
-    if prompt is None:
+    if not prompt:
+        return
+    if is_auto_injected(prompt):
         return
     ts = now_iso()
     rows = read_transcript(payload.get("transcript_path"))
@@ -205,29 +261,35 @@ def mode_prompt(payload):
     num = next_num(path)
     append_entry(path, "PROMPT", num, session_id, ts, model, prompt)
     update_frontmatter(path, model if model != "pending" else None)
+    set_state(session_id, "floor_ts", ts)
 
 
 def mode_response(payload):
     session_id = payload.get("session_id") or "unknown-session"
     path = session_file(session_id)
     if not path:
-        return                            # no prompt logged for this session yet
-    rows = read_transcript(payload.get("transcript_path"))
-    model = last_model(rows) or "unknown"
-    text = final_response(rows)
+        return                            # no human prompt logged for this session yet
+    floor_ts = get_state().get(session_id, {}).get("floor_ts", "")
+    text, ts, rows = await_response(payload.get("transcript_path"), floor_ts)
     if not text:
-        text = "(no final text response for this turn)"
+        return                            # turn produced no final text; nothing to log
+    if ts and ts <= floor_ts:
+        return                            # already-captured response, Stop fired again
+    model = last_model(rows) or "unknown"
     with open(path, "r") as f:
         existing = f.read()
-    nums = [int(n) for n in re.findall(r"^\[LOG_ENTRY type=PROMPT num=(\d+) ", existing, re.M)]
-    done = [int(n) for n in re.findall(r"^\[LOG_ENTRY type=RESPONSE num=(\d+) ", existing, re.M)]
-    pending = [n for n in nums if n not in done]
-    if not pending:
-        return                            # nothing awaiting a response
-    num = max(pending)
+    prompts = [int(n) for n in re.findall(r"^\[LOG_ENTRY type=PROMPT num=(\d+) ", existing, re.M)]
+    answered = [int(n) for n in re.findall(r"^\[LOG_ENTRY type=RESPONSE num=(\d+) ", existing, re.M)]
+    if not prompts:
+        return
+    pending = [n for n in prompts if n not in answered]
+    # No pending prompt means the harness resumed the turn on its own; the text
+    # belongs to the last human prompt, so it is logged under that same number.
+    num = max(pending) if pending else max(prompts)
     resolve_pending_model(path, model)
     append_entry(path, "RESPONSE", num, session_id, now_iso(), model, text)
     update_frontmatter(path, model)
+    set_state(session_id, "floor_ts", ts)
 
 
 def main():

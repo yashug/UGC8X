@@ -11,7 +11,19 @@ import type { ResolvedKeys } from "./keys";
  * which is why they work on any provider.
  */
 
-export const VOICE_MODEL = process.env.GOOGLE_TTS_MODEL ?? "gemini-2.5-flash-preview-tts";
+/**
+ * Tried in order, falling through on a quota failure.
+ *
+ * The free tier meters each TTS model separately and gemini-2.5-flash-preview-tts
+ * allows only TEN requests a day — one video is five calls, so two videos killed
+ * it and every render after that came out silent. The 3.1 preview draws from its
+ * own bucket, so ordering it first and falling back roughly triples what the free
+ * lane can speak.
+ */
+export const VOICE_MODELS = process.env.GOOGLE_TTS_MODEL
+  ? [process.env.GOOGLE_TTS_MODEL]
+  : ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
+
 export const VOICE_NAME = process.env.GOOGLE_TTS_VOICE ?? "Kore";
 
 export type Voiceover = {
@@ -21,21 +33,53 @@ export type Voiceover = {
   source: "gemini" | "none";
 };
 
+/** No key is a configuration state, not a failure — the caller treats it differently. */
+export class NoVoiceKeyError extends Error {
+  constructor() {
+    super("No key available for text to speech.");
+    this.name = "NoVoiceKeyError";
+  }
+}
+
+/**
+ * Throws on a genuine failure rather than returning empty audio.
+ *
+ * An earlier version swallowed every error and returned silence, so a quota
+ * failure produced a completely silent video that nothing in the system reported.
+ * A missing voiceover is the single most damaging thing that can go wrong here,
+ * so it must be loud.
+ */
 export async function generateVoiceover(
   keys: ResolvedKeys,
   text: string,
 ): Promise<Voiceover> {
   const apiKey = keys.keys.google;
-  if (!apiKey || !text.trim()) {
+  if (!apiKey) throw new NoVoiceKeyError();
+  if (!text.trim()) {
     return { audio: new Uint8Array(), mediaType: "", source: "none" };
   }
 
   const google = createGoogleGenerativeAI({ apiKey });
-  const result = await generateSpeech({
-    model: google.speech(VOICE_MODEL),
-    text,
-    voice: VOICE_NAME,
-  });
+
+  let result;
+  let lastError: unknown;
+  for (const modelId of VOICE_MODELS) {
+    try {
+      result = await generateSpeech({
+        model: google.speech(modelId),
+        text,
+        voice: VOICE_NAME,
+      });
+      break;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      // Only a quota failure is worth trying another model for.
+      if (!/quota|rate.?limit|429/i.test(message)) throw error;
+    }
+  }
+
+  if (!result) throw lastError ?? new Error("Text to speech failed.");
 
   const mediaType = result.audio.mediaType ?? "";
   const bytes = result.audio.uint8Array;

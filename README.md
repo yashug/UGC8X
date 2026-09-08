@@ -66,8 +66,8 @@ payload the runner sees is nothing but URLs.
 - Sites whose `og:image` is a logo rather than a screenshot produce a logo-heavy
   video. Linear is a good example. The fix is capturing the live site with a
   headless browser, which is the upgraded lane for product shots.
-- Videos run ~30s against a 25s target, because real speech is slower than the
-  script's estimate. The script prompt should ask for tighter lines.
+- Videos run 30-36s against a 25s target, because real speech is slower than the
+  script's estimate. The script prompt should ask for tighter lines. Not yet fixed.
 - One Gemini voice. ElevenLabs would bring word timings and karaoke captions.
 - M4 has never been run end to end. See above.
 
@@ -124,6 +124,17 @@ a video that would never arrive. That contradiction is detectable — a promise,
 tool call, and a URL sitting in the message — so it is repaired. It never decides
 that an ordinary message should render; it only fires once the model has already
 said it is doing the thing.
+
+**A silent video is never shipped quietly.** Voiceover failures used to be
+swallowed by a bare `catch`, so a exhausted quota produced a completely silent
+video with no log line, no warning and nothing said to the user. Failures are now
+retried, reported on the card, and logged. Speech is also generated one scene at a
+time rather than five at once, since concurrency was what tripped the rate limit.
+
+**Free-tier quota is metered per model, so the pipeline spreads across models.**
+Chat routing and scriptwriting use different Gemini models; text-to-speech falls
+through a list. `gemini-2.5-flash-preview-tts` allows ten requests a day and one
+video costs five, so a single model meant two videos and then silence.
 
 **Proof points are copied, never invented.** The brief prompt forbids inventing a
 statistic, and the script prompt forbids using one that is not in the brief. A

@@ -59,6 +59,12 @@ export type JobData = {
   script?: VideoScript;
   videoUrl?: string;
   error?: string;
+  /**
+   * Things that went wrong without failing the job — most importantly a missing
+   * voiceover. A silent video is a defective deliverable, so it is never shipped
+   * quietly.
+   */
+  warnings?: string[];
   /** Set while the render pipeline is still being built out. */
   notImplemented?: boolean;
 };

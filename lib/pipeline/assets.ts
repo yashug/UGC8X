@@ -8,7 +8,7 @@ import { wavDurationSec } from "@/lib/media/wav";
 import type { SiteExtract } from "@/lib/product/extract";
 import { fetchHookClip } from "@/lib/providers/hook";
 import type { ResolvedKeys } from "@/lib/providers/keys";
-import { generateVoiceover } from "@/lib/providers/voice";
+import { NoVoiceKeyError, generateVoiceover, type Voiceover } from "@/lib/providers/voice";
 
 /** What the Remotion composition needs, with every path relative to the asset dir. */
 export type SceneAsset = {
@@ -36,6 +36,8 @@ export type VideoAssets = {
   credit?: string;
   /** What we could not get, so the UI can say so rather than quietly degrading. */
   missing: string[];
+  /** Voiceover is the asset whose absence ruins the video, so it is reported exactly. */
+  voice: { spoken: number; total: number; reason?: string };
 };
 
 const MIN_SCENE_SEC = 2.5;
@@ -76,6 +78,66 @@ export function score(image: { url: string; alt: string }): number {
   return points;
 }
 
+/**
+ * Turns voiceover coverage into something the user reads on the card.
+ * A silent video must never ship without saying so.
+ */
+export function voiceWarnings(voice: {
+  spoken: number;
+  total: number;
+  reason?: string;
+}): string[] {
+  if (voice.total === 0 || voice.spoken === voice.total) return [];
+
+  const because = voice.reason ? ` — ${voice.reason}` : "";
+
+  if (voice.spoken === 0) {
+    return [`This video has no voiceover${because}.`];
+  }
+  const silent = voice.total - voice.spoken;
+  return [
+    `${silent} of ${voice.total} scene${silent === 1 ? " is" : "s are"} silent${because}.`,
+  ];
+}
+
+type SpeechOutcome = { voice: Voiceover | null; reason?: string };
+
+/**
+ * Two attempts, with a pause between them, because the common failure is a
+ * per-minute rate limit that clears on its own. Anything still failing after
+ * that is reported rather than swallowed.
+ */
+async function speakWithRetry(
+  keys: ResolvedKeys,
+  text: string,
+  attempts = 2,
+): Promise<SpeechOutcome> {
+  let reason: string | undefined;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return { voice: await generateVoiceover(keys, text) };
+    } catch (error) {
+      if (error instanceof NoVoiceKeyError) {
+        return { voice: null, reason: "no key for text to speech" };
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      reason = /quota|rate.?limit|429/i.test(message)
+        ? "the text-to-speech quota is exhausted"
+        : "text to speech failed";
+
+      // Never silent: a swallowed error here is what shipped a silent video.
+      console.warn(`[ugc8x] voiceover attempt ${attempt + 1} failed: ${message.slice(0, 160)}`);
+
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+      }
+    }
+  }
+
+  return { voice: null, reason };
+}
+
 export async function buildAssets({
   dir,
   keys,
@@ -92,22 +154,32 @@ export async function buildAssets({
   await mkdir(dir, { recursive: true });
   const missing: string[] = [];
 
-  // Voiceover and the hook clip are independent, so fetch them together.
-  const [voices, hook] = await Promise.all([
-    Promise.all(
-      script.scenes.map(async (scene) => {
-        try {
-          return await generateVoiceover(keys, scene.voiceover);
-        } catch {
-          return null;
-        }
-      }),
-    ),
-    fetchHookClip(keys, brief).catch(() => null),
-  ]);
+  // The hook clip is independent of speech, so it can run alongside.
+  const hookPromise = fetchHookClip(keys, brief).catch(() => null);
 
-  if (voices.every((voice) => !voice || voice.source === "none")) {
+  // Voiceover is generated ONE AT A TIME on purpose. Five concurrent calls is a
+  // reliable way to trip a per-minute rate limit, and a rate-limited scene used
+  // to become silence that nothing reported.
+  const voices: (Voiceover | null)[] = [];
+  let voiceReason: string | undefined;
+
+  for (const scene of script.scenes) {
+    const outcome = await speakWithRetry(keys, scene.voiceover);
+    if (outcome.voice) {
+      voices.push(outcome.voice);
+    } else {
+      voices.push(null);
+      voiceReason ??= outcome.reason;
+    }
+  }
+
+  const hook = await hookPromise;
+
+  const spoken = voices.filter((voice) => voice && voice.audio.byteLength > 0).length;
+  if (spoken === 0) {
     missing.push("voiceover");
+  } else if (spoken < script.scenes.length) {
+    missing.push(`voiceover on ${script.scenes.length - spoken} of ${script.scenes.length} scenes`);
   }
 
   let hookFile: string | null = null;
@@ -190,6 +262,7 @@ export async function buildAssets({
     totalDurationSec: scenes.reduce((total, scene) => total + scene.durationSec, 0),
     credit: hook?.credit,
     missing,
+    voice: { spoken, total: script.scenes.length, reason: voiceReason },
   };
 }
 

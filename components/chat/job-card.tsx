@@ -166,6 +166,16 @@ export function JobCard({ job: streamed }: { job: JobData }) {
         </div>
       ) : null}
 
+      {job.warnings?.length ? (
+        <ul className="border-t border-line bg-sunk px-4 py-2.5">
+          {job.warnings.map((warning) => (
+            <li key={warning} className="text-[12px] leading-5 text-muted">
+              {warning}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       {job.error ? (
         <p className="border-t border-line px-4 py-2.5 text-[12px] text-danger">
           {job.error}

@@ -6,7 +6,7 @@ import type { JobData, JobStage, JobStageName } from "@/lib/ai/types";
 import { putJob } from "@/lib/jobs/store";
 import type { SiteExtract } from "@/lib/product/extract";
 import type { ResolvedKeys } from "@/lib/providers/keys";
-import { buildAssets } from "./assets";
+import { buildAssets, voiceWarnings } from "./assets";
 import { dispatchRender, isRemoteRenderConfigured, uploadAssets } from "@/lib/render/dispatch";
 import { renderVideo, resetBundle } from "@/lib/render/local";
 
@@ -64,6 +64,13 @@ export async function runRenderJob({
       script: current.script,
       site,
     });
+
+    // A missing voiceover is not a footnote: say it on the card, and say why.
+    const warnings = voiceWarnings(assets.voice);
+    if (warnings.length > 0) {
+      current = { ...current, warnings };
+      save();
+    }
 
     setStage(
       "assets",

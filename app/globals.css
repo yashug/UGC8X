@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+/*
+  UGC8X — stark and minimal.
+  One near-neutral canvas, one accent, and a deliberately narrow type scale.
+  The render card is the only place colour is allowed to do any work.
+*/
+
+:root {
+  --bg: #fcfcfc;
+  --surface: #ffffff;
+  --surface-sunk: #f4f4f5;
+  --border: #e7e7e9;
+  --border-strong: #d6d6da;
+  --text: #17171a;
+  --text-muted: #6b6b73;
+  --text-faint: #9a9aa3;
+  --accent: #1f6feb;
+  --accent-contrast: #ffffff;
+  --danger: #c8342b;
+  --ok: #14804a;
+}
+
+html[data-theme="dark"] {
+  --bg: #0b0b0d;
+  --surface: #141417;
+  --surface-sunk: #1b1b1f;
+  --border: #26262b;
+  --border-strong: #35353c;
+  --text: #f2f2f4;
+  --text-muted: #9c9ca5;
+  --text-faint: #6a6a73;
+  --accent: #5b9bff;
+  --accent-contrast: #0b0b0d;
+  --danger: #ff6b60;
+  --ok: #46c98a;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --bg: #0b0b0d;
+    --surface: #141417;
+    --surface-sunk: #1b1b1f;
+    --border: #26262b;
+    --border-strong: #35353c;
+    --text: #f2f2f4;
+    --text-muted: #9c9ca5;
+    --text-faint: #6a6a73;
+    --accent: #5b9bff;
+    --accent-contrast: #0b0b0d;
+    --danger: #ff6b60;
+    --ok: #46c98a;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunk: var(--surface-sunk);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--text);
+  --color-muted: var(--text-muted);
+  --color-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--accent-contrast);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The thread is long-form reading, so it gets a slightly generous measure. */
+.prose-thread p {
+  margin: 0 0 0.75em;
+}
+.prose-thread p:last-child {
+  margin-bottom: 0;
+}
+.prose-thread strong {
+  font-weight: 600;
+}
+.prose-thread code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+@keyframes ugc-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-in-up {
+  animation: ugc-fade-up 0.24s ease-out both;
+}
+
+@keyframes ugc-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.animate-pulse-dot {
+  animation: ugc-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in-up,
+  .animate-pulse-dot {
+    animation: none;
+  }
+}
+
+/*
+  Theme toggle icon swap, driven by the same signal as the palette so the button
+  needs no React state and cannot desync from the theme it reports.
+*/
+.theme-icon-dark {
+  display: none;
+}
+html[data-theme="dark"] .theme-icon-dark {
+  display: block;
+}
+html[data-theme="dark"] .theme-icon-light {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .theme-icon-dark {
+    display: block;
+  }
+  html:not([data-theme="light"]) .theme-icon-light {
+    display: none;
+  }
+}

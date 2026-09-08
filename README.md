@@ -16,9 +16,9 @@ Everything else is a normal conversation.
 |---|---|
 | M1 — chat, tool routing, job card, BYOK header | **done** |
 | M2 — URL → brief → script streamed into thread | **done** |
-| M3 — footage, voiceover, local Remotion render | **done** |
+| M3 — footage, voiceover, video assembled client-side | **done** |
 | M1b — BYOK settings sheet, encrypted storage | **done** |
-| M4 — GitHub Actions renderer → public URL | **built, not yet verified** |
+| ~~M4 — GitHub Actions renderer → public URL~~ | **removed** — see below |
 | M5 — Vercel + Neon + Inngest | not started |
 | M6 — design pass | not started |
 
@@ -27,14 +27,19 @@ sources footage and a voiceover, and **renders an actual MP4** — around 90 sec
 end to end. The brief and script stream into the thread while it works; once the
 chat turn ends the card polls for itself until the video appears.
 
-Rendering happens locally by default. When the GitHub and R2 environment variables
-are all present the render is instead handed to a GitHub Actions runner, which
-uploads the finished mp4 to R2 and calls back. Missing any of them falls back to
-local rendering rather than failing — see `isRemoteRenderConfigured()`.
+**Nothing is rendered and nothing is stored.** The video is assembled in the
+browser by a Remotion Player, playing the same composition a server would have
+rendered. The hook clip streams from Pexels' CDN, product imagery from the
+product's own site, and the voiceover — the one asset the server has to generate,
+because it needs an API key — is held in memory and served same-origin.
 
-**M4 has not been run end to end.** The code, workflow and callback auth are in
-place and unit-tested, but this repo has no GitHub remote and no R2 credentials,
-so a real dispatch has never happened. Treat it as unproven until it has.
+This replaced an earlier design that rendered an MP4 on a GitHub Actions runner
+and stored it in R2. That whole path is gone: no object storage, no render
+worker, no callback endpoint, no video files. It also removes the ~45 seconds of
+encoding, so the video is watchable as soon as its assets exist.
+
+**The trade is explicit: there is no MP4 and no shareable URL.** The original
+brief asked for a video URL in the chat; a client-side video cannot have one.
 
 ## Running it
 
@@ -46,21 +51,6 @@ npm run dev
 
 With no key at all the app still runs and tells you which free key to add.
 
-## Deploying with remote rendering
-
-1. Push this repo to GitHub (public keeps Actions minutes unlimited).
-2. Create an R2 bucket and an API token.
-3. Create a fine-grained PAT with **Actions: write** on the repo.
-4. Generate a shared secret: `openssl rand -hex 32`.
-5. Set it as the repo secret `RENDER_CALLBACK_SECRET`, along with `R2_ACCOUNT_ID`,
-   `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`.
-6. Set the same values plus `GH_RENDER_TOKEN`, `GH_RENDER_REPO` and
-   `PUBLIC_APP_URL` in the app's environment.
-
-The runner never receives a provider API key. Everything that needs one — the
-voiceover especially — is produced by the app and uploaded to R2 first, so the
-payload the runner sees is nothing but URLs.
-
 ## Known limitations
 
 - Sites whose `og:image` is a logo rather than a screenshot produce a logo-heavy
@@ -69,7 +59,11 @@ payload the runner sees is nothing but URLs.
 - Videos run 30-36s against a 25s target, because real speech is slower than the
   script's estimate. The script prompt should ask for tighter lines. Not yet fixed.
 - One Gemini voice. ElevenLabs would bring word timings and karaoke captions.
-- M4 has never been run end to end. See above.
+- No MP4 and no shareable link, by design. Producing a file would mean either a
+  server render or client-side WebCodecs encoding, which cannot load cross-origin
+  assets without a proxy.
+- Browser playback has been verified only through its data: the props, the asset
+  endpoint and the build. Open the app and watch one to confirm the picture.
 
 ## Design notes
 
@@ -111,11 +105,6 @@ key should fail at paste time, not two minutes into a render. But Pexels answers
 a search identically with a valid key, a garbage key, or no key at all — an early
 version happily accepted the string `obviously-not-a-real-key`. Validation now
 reports whether it actually verified, and the UI says so.
-
-**The render callback assumes the internet is hostile.** It is a public endpoint
-that marks a job finished and attaches a video URL, so every request must carry an
-HMAC of its own body. Without it, anyone could point your finished video at their
-own file. Verified with a constant-time compare.
 
 **A guard catches the model claiming to act without acting.** Tool calling is not
 perfectly reliable: on one run the model answered a message containing a URL with

@@ -13,7 +13,7 @@ import { z } from "zod";
 
 import { putJob } from "@/lib/jobs/store";
 import { runBriefPipeline } from "@/lib/pipeline/run";
-import { runRenderJob } from "@/lib/pipeline/render-job";
+import { prepareVideo } from "@/lib/pipeline/prepare-video";
 import type { ResolvedKeys } from "@/lib/providers/keys";
 import type { ChatMessage } from "./chat-message";
 import { describeError } from "./errors";
@@ -116,11 +116,11 @@ async function startVideoJob({
     };
   }
 
-  // Rendering takes minutes, far longer than this turn may stay open, so it runs
+  // Assembling the assets takes long enough to outlive this turn, so it runs
   // detached and reports into the job store for the card to poll.
   putJob(finished);
   if (site && keys) {
-    void runRenderJob({ job: finished, keys, site });
+    void prepareVideo({ job: finished, keys, site });
   }
 
   return {
@@ -131,7 +131,7 @@ async function startVideoJob({
     oneLiner: finished.brief?.oneLiner,
     scenes: finished.script?.scenes.length,
     durationSec: finished.script?.totalDurationSec,
-    note: "The brief and script are already shown to the user in the job card, which now renders the video and updates itself — do not repeat them and do not list the scenes. Say in one short sentence that the script is ready and the video is rendering. Do NOT claim the video is finished and never invent a URL.",
+    note: "The brief and script are already shown to the user in the job card, which is assembling the video and will play it there — do not repeat them and do not list the scenes. Say in one short sentence that the script is ready and the video is being put together. There is no URL and no file: the video plays in the chat. Never invent a link.",
   };
 }
 

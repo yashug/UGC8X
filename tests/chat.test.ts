@@ -84,7 +84,8 @@ describe("chat routing", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0].url).toBe("https://calai.app/");
     expect(jobs[0].productName).toBe("CalAI");
-    expect(jobs[0].stages).toHaveLength(7);
+    // Five stages, not seven: there is no render or deliver step any more.
+    expect(jobs[0].stages).toHaveLength(5);
     expect(jobs[0].stages.every((stage) => stage.status === "pending")).toBe(true);
   });
 
@@ -98,9 +99,9 @@ describe("chat routing", () => {
     expect(jobParts(chunks)).toHaveLength(0);
   });
 
-  it("never puts a video url on the card before one exists", async () => {
+  it("never puts a playable video on the card before one exists", async () => {
     const chunks = await runChat(toolCallParts({ url: "calai.app" }), "calai.app");
     const [job] = jobParts(chunks);
-    expect(job.videoUrl).toBeUndefined();
+    expect(job.video).toBeUndefined();
   });
 });

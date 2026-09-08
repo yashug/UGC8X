@@ -1,8 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-
 import type { ProductBrief, VideoScript } from "@/lib/ai/types";
-import { downloadTo } from "@/lib/media/download";
+import { putAsset } from "@/lib/assets/store";
+import { fetchBytes } from "@/lib/media/download";
 import { readImageSize } from "@/lib/media/image-size";
 import { wavDurationSec } from "@/lib/media/wav";
 import type { SiteExtract } from "@/lib/product/extract";
@@ -10,13 +8,13 @@ import { fetchHookClip } from "@/lib/providers/hook";
 import type { ResolvedKeys } from "@/lib/providers/keys";
 import { NoVoiceKeyError, generateVoiceover, type Voiceover } from "@/lib/providers/voice";
 
-/** What the Remotion composition needs, with every path relative to the asset dir. */
+/** What the Player needs. Every field is a URL the browser can fetch directly. */
 export type SceneAsset = {
   index: number;
   durationSec: number;
   voiceover: string;
   onScreenText: string;
-  /** File name inside the asset dir, or null if this scene has no audio. */
+  /** Same-origin URL for the generated voiceover, or null if this scene is silent. */
   audioFile: string | null;
   imageFile: string | null;
   videoFile: string | null;
@@ -139,19 +137,18 @@ async function speakWithRetry(
 }
 
 export async function buildAssets({
-  dir,
+  jobId,
   keys,
   brief,
   script,
   site,
 }: {
-  dir: string;
+  jobId: string;
   keys: ResolvedKeys;
   brief: ProductBrief;
   script: VideoScript;
   site: SiteExtract;
 }): Promise<VideoAssets> {
-  await mkdir(dir, { recursive: true });
   const missing: string[] = [];
 
   // The hook clip is independent of speech, so it can run alongside.
@@ -182,37 +179,27 @@ export async function buildAssets({
     missing.push(`voiceover on ${script.scenes.length - spoken} of ${script.scenes.length} scenes`);
   }
 
-  let hookFile: string | null = null;
-  if (hook?.videoUrl) {
-    const saved = await downloadTo(hook.videoUrl, path.join(dir, "hook.mp4"));
-    hookFile = saved ? "hook.mp4" : null;
-  }
+  // Played straight from Pexels' CDN. Nothing to download, nothing to store.
+  const hookFile: string | null = hook?.videoUrl || null;
   if (!hookFile) missing.push("hook clip");
 
+  // Images are fetched only to read their dimensions, then the bytes are thrown
+  // away and the browser loads the original URL. Measuring still matters: a
+  // landscape og:image in a portrait phone frame loses its headline.
   const imageUrls = pickProductImages(site, script.scenes.length);
-  const imageFiles: (string | null)[] = [];
-  for (const [index, url] of imageUrls.entries()) {
-    const extension = url.split("?")[0].match(/\.(png|jpe?g|webp)$/i)?.[0] ?? ".jpg";
-    const name = `shot-${index}${extension}`;
-    const saved = await downloadTo(url, path.join(dir, name));
-    imageFiles.push(saved ? name : null);
-  }
-  // Measure what actually downloaded, so presentation follows the real shape.
-  const measured: { file: string; fit: "phone" | "wide" }[] = [];
-  for (const file of imageFiles) {
-    if (!file) continue;
+  const usableImages: { file: string; fit: "phone" | "wide" }[] = [];
+
+  for (const url of imageUrls) {
+    const bytes = await fetchBytes(url);
+    if (!bytes) continue; // unreachable now is unreachable for the browser too
+
     let fit: "phone" | "wide" = "wide";
-    try {
-      const size = readImageSize(await readFile(path.join(dir, file)));
-      if (size && size.height > 0) {
-        fit = size.width / size.height < 0.85 ? "phone" : "wide";
-      }
-    } catch {
-      // Unreadable header: treat it as wide, which crops nothing.
+    const size = readImageSize(bytes);
+    if (size && size.height > 0) {
+      fit = size.width / size.height < 0.85 ? "phone" : "wide";
     }
-    measured.push({ file, fit });
+    usableImages.push({ file: url, fit });
   }
-  const usableImages = measured;
   if (usableImages.length === 0) missing.push("product screenshots");
 
   const scenes: SceneAsset[] = [];
@@ -222,8 +209,8 @@ export async function buildAssets({
     let spokenSec = 0;
 
     if (voice && voice.source !== "none" && voice.audio.byteLength > 0) {
-      audioFile = `vo-${index}.wav`;
-      await writeFile(path.join(dir, audioFile), voice.audio);
+      // Held in memory and served same-origin; never written anywhere.
+      audioFile = putAsset(jobId, `vo-${index}.wav`, voice.audio, "audio/wav");
       spokenSec = wavDurationSec(voice.audio);
     }
 

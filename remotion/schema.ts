@@ -19,12 +19,12 @@ export type UgcVideoProps = {
 };
 
 /**
- * Assets are referenced either by file name (local render, resolved out of the
- * public dir) or by absolute URL (the GitHub Actions render, where everything
- * lives in R2). One helper covers both so the composition is identical either way.
+ * Every asset is now a URL the browser fetches itself: an absolute one for the
+ * hook clip and product imagery, or a same-origin path for the voiceover this
+ * server generated. Nothing resolves out of a public directory any more.
  */
-export function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
+export function isFetchableUrl(value: string): boolean {
+  return /^(https?:)?\/\//i.test(value) || value.startsWith("/");
 }
 
 export const FPS = 30;

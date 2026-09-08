@@ -1,3 +1,5 @@
+import type { UgcVideoProps } from "@/remotion/schema";
+
 /**
  * Shared shapes for the chat thread.
  *
@@ -6,14 +8,11 @@
  * the assistant's message streams normally around it.
  */
 
-export type JobStageName =
-  | "fetch"
-  | "extract"
-  | "brief"
-  | "script"
-  | "assets"
-  | "render"
-  | "deliver";
+/**
+ * There is no render or deliver stage: the browser assembles the video live from
+ * a Remotion Player, so once the assets exist there is nothing left to do.
+ */
+export type JobStageName = "fetch" | "extract" | "brief" | "script" | "assets";
 
 export type JobStageStatus = "pending" | "active" | "done" | "failed" | "skipped";
 
@@ -57,7 +56,8 @@ export type JobData = {
   stages: JobStage[];
   brief?: ProductBrief;
   script?: VideoScript;
-  videoUrl?: string;
+  /** Everything the Player needs. No file exists anywhere. */
+  video?: UgcVideoProps;
   error?: string;
   /**
    * Things that went wrong without failing the job — most importantly a missing
@@ -75,8 +75,6 @@ export const STAGE_LABELS: Record<JobStageName, string> = {
   brief: "Understanding what it is",
   script: "Writing the script",
   assets: "Voiceover and footage",
-  render: "Rendering the video",
-  deliver: "Publishing",
 };
 
 export const STAGE_ORDER: JobStageName[] = [
@@ -85,8 +83,6 @@ export const STAGE_ORDER: JobStageName[] = [
   "brief",
   "script",
   "assets",
-  "render",
-  "deliver",
 ];
 
 export function initialStages(): JobStage[] {

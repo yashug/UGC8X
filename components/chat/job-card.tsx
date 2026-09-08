@@ -3,6 +3,7 @@
 import type { JobData, JobStage, ProductBrief, VideoScript } from "@/lib/ai/types";
 import { hostOf } from "@/lib/ai/url";
 import { useLiveJob } from "./use-job";
+import { VideoPlayer } from "./video-player";
 
 function StageDot({ status }: { status: JobStage["status"] }) {
   if (status === "done") {
@@ -147,24 +148,7 @@ export function JobCard({ job: streamed }: { job: JobData }) {
 
       {job.script ? <ScriptBlock script={job.script} /> : null}
 
-      {job.videoUrl ? (
-        <div className="border-t border-line p-3">
-          <video
-            controls
-            playsInline
-            src={job.videoUrl}
-            className="w-full rounded-lg bg-black"
-          />
-          <a
-            href={job.videoUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="mt-2 block truncate font-mono text-[11px] text-accent underline-offset-2 hover:underline"
-          >
-            {job.videoUrl}
-          </a>
-        </div>
-      ) : null}
+      {job.video ? <VideoPlayer video={job.video} /> : null}
 
       {job.warnings?.length ? (
         <ul className="border-t border-line bg-sunk px-4 py-2.5">

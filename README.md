@@ -18,7 +18,7 @@ Everything else is a normal conversation.
 | M2 — URL → brief → script streamed into thread | **done** |
 | M3 — footage, voiceover, local Remotion render | **done** |
 | M1b — BYOK settings sheet, encrypted storage | **done** |
-| M4 — GitHub Actions renderer → public URL | next |
+| M4 — GitHub Actions renderer → public URL | **built, not yet verified** |
 | M5 — Vercel + Neon + Inngest | not started |
 | M6 — design pass | not started |
 
@@ -27,9 +27,14 @@ sources footage and a voiceover, and **renders an actual MP4** — around 90 sec
 end to end. The brief and script stream into the thread while it works; once the
 chat turn ends the card polls for itself until the video appears.
 
-Rendering currently happens on the machine running the app, which is why M4 exists:
-Vercel functions cannot stay alive long enough, so the render moves to a GitHub
-Actions runner with the output going to R2.
+Rendering happens locally by default. When the GitHub and R2 environment variables
+are all present the render is instead handed to a GitHub Actions runner, which
+uploads the finished mp4 to R2 and calls back. Missing any of them falls back to
+local rendering rather than failing — see `isRemoteRenderConfigured()`.
+
+**M4 has not been run end to end.** The code, workflow and callback auth are in
+place and unit-tested, but this repo has no GitHub remote and no R2 credentials,
+so a real dispatch has never happened. Treat it as unproven until it has.
 
 ## Running it
 
@@ -40,6 +45,21 @@ npm run dev
 ```
 
 With no key at all the app still runs and tells you which free key to add.
+
+## Deploying with remote rendering
+
+1. Push this repo to GitHub (public keeps Actions minutes unlimited).
+2. Create an R2 bucket and an API token.
+3. Create a fine-grained PAT with **Actions: write** on the repo.
+4. Generate a shared secret: `openssl rand -hex 32`.
+5. Set it as the repo secret `RENDER_CALLBACK_SECRET`, along with `R2_ACCOUNT_ID`,
+   `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`.
+6. Set the same values plus `GH_RENDER_TOKEN`, `GH_RENDER_REPO` and
+   `PUBLIC_APP_URL` in the app's environment.
+
+The runner never receives a provider API key. Everything that needs one — the
+voiceover especially — is produced by the app and uploaded to R2 first, so the
+payload the runner sees is nothing but URLs.
 
 ## Design notes
 
@@ -81,6 +101,11 @@ key should fail at paste time, not two minutes into a render. But Pexels answers
 a search identically with a valid key, a garbage key, or no key at all — an early
 version happily accepted the string `obviously-not-a-real-key`. Validation now
 reports whether it actually verified, and the UI says so.
+
+**The render callback assumes the internet is hostile.** It is a public endpoint
+that marks a job finished and attaches a video URL, so every request must carry an
+HMAC of its own body. Without it, anyone could point your finished video at their
+own file. Verified with a constant-time compare.
 
 **Proof points are copied, never invented.** The brief prompt forbids inventing a
 statistic, and the script prompt forbids using one that is not in the brief. A

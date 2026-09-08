@@ -7,6 +7,7 @@ import { putJob } from "@/lib/jobs/store";
 import type { SiteExtract } from "@/lib/product/extract";
 import type { ResolvedKeys } from "@/lib/providers/keys";
 import { buildAssets } from "./assets";
+import { dispatchRender, isRemoteRenderConfigured, uploadAssets } from "@/lib/render/dispatch";
 import { renderVideo, resetBundle } from "@/lib/render/local";
 
 export const RENDER_ROOT = path.resolve(process.cwd(), ".renders");
@@ -71,6 +72,20 @@ export async function runRenderJob({
         ? `no ${assets.missing.join(", ")} — using fallbacks`
         : `${assets.scenes.length} scenes, ${Math.round(assets.totalDurationSec)}s`,
     );
+
+    // Two renderers behind one decision. Remote is used when it is fully
+    // configured; otherwise this falls back to rendering here, so a missing
+    // GitHub token degrades to "slower and local" rather than "broken".
+    if (isRemoteRenderConfigured()) {
+      setStage("render", "active", "handing off to the runner");
+      const props = await uploadAssets(current.jobId, assets, assetDir);
+      await dispatchRender(current.jobId, props);
+
+      // The runner reports progress and the finished URL to /api/render-callback,
+      // which advances the job from there. Nothing further to do here.
+      await rm(assetDir, { recursive: true, force: true }).catch(() => undefined);
+      return;
+    }
 
     setStage("render", "active", "0%");
     // Each job has its own asset dir, so the previous bundle cannot be reused.

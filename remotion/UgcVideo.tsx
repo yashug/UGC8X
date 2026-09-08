@@ -11,7 +11,12 @@ import {
 } from "remotion";
 
 import { Caption } from "./Captions";
-import { FPS, type RemotionScene, type UgcVideoProps } from "./schema";
+import { FPS, isAbsoluteUrl, type RemotionScene, type UgcVideoProps } from "./schema";
+
+/** Local renders pass file names; the Actions renderer passes R2 URLs. */
+function src(value: string): string {
+  return isAbsoluteUrl(value) ? value : staticFile(value);
+}
 
 /** Slow push-in. Static footage reads as a slideshow without it. */
 function useKenBurns(durationInFrames: number) {
@@ -136,7 +141,7 @@ function SceneBody({
     return (
       <AbsoluteFill style={{ background: "#000" }}>
         <OffthreadVideo
-          src={staticFile(scene.videoFile)}
+          src={src(scene.videoFile)}
           muted
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
         />
@@ -146,9 +151,9 @@ function SceneBody({
 
   if (scene.imageFile) {
     return scene.imageFit === "phone" ? (
-      <PhoneFrame src={staticFile(scene.imageFile)} accentColor={accentColor} />
+      <PhoneFrame src={src(scene.imageFile)} accentColor={accentColor} />
     ) : (
-      <WideShot src={staticFile(scene.imageFile)} accentColor={accentColor} />
+      <WideShot src={src(scene.imageFile)} accentColor={accentColor} />
     );
   }
 
@@ -172,7 +177,7 @@ function Scene({
       {/* The end card states the CTA itself, so a caption underneath it would
           only collide with it. */}
       {showCaption ? <Caption text={scene.onScreenText} accentColor={accentColor} /> : null}
-      {scene.audioFile ? <Audio src={staticFile(scene.audioFile)} /> : null}
+      {scene.audioFile ? <Audio src={src(scene.audioFile)} /> : null}
     </AbsoluteFill>
   );
 }

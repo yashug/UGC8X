@@ -18,6 +18,15 @@ export type UgcVideoProps = {
   credit?: string;
 };
 
+/**
+ * Assets are referenced either by file name (local render, resolved out of the
+ * public dir) or by absolute URL (the GitHub Actions render, where everything
+ * lives in R2). One helper covers both so the composition is identical either way.
+ */
+export function isAbsoluteUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
 export const FPS = 30;
 export const WIDTH = 1080;
 export const HEIGHT = 1920;

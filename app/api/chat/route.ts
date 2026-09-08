@@ -4,7 +4,7 @@ import type { ChatMessage } from "@/lib/ai/chat-message";
 import { createChatStream } from "@/lib/ai/chat";
 import { NO_KEY_MESSAGE } from "@/lib/ai/prompts";
 import { readUserKeys, redact, resolveKeys } from "@/lib/providers/keys";
-import { chatModel, NoLlmKeyError } from "@/lib/providers/llm";
+import { chatModel, scriptModel, NoLlmKeyError } from "@/lib/providers/llm";
 
 export const maxDuration = 60;
 
@@ -35,6 +35,8 @@ export async function POST(req: Request) {
     stream: createChatStream({
       model: llm.model,
       messages: body.messages,
+      keys: resolved,
+      scriptModel: scriptModel(resolved).model,
       sanitizeError: (message) => redact(message, resolved.keys),
     }),
   });

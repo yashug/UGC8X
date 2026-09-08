@@ -4,13 +4,14 @@ import { generateBrief } from "@/lib/ai/brief";
 import { generateScript } from "@/lib/ai/script";
 import type { JobData, JobStageName, JobStage } from "@/lib/ai/types";
 import { initialStages } from "@/lib/ai/types";
-import { extractSite } from "@/lib/product/extract";
+import { extractSite, type SiteExtract } from "@/lib/product/extract";
 import { fetchSite, UnreachableSiteError } from "@/lib/product/fetch";
 
 export type PipelineUpdate = (job: JobData) => void;
 
 export type PipelineOptions = {
   job: JobData;
+  /** The scriptwriting model, which is not the same one that routes chat. */
   model: LanguageModel;
   angle?: string;
   onUpdate: PipelineUpdate;
@@ -26,12 +27,18 @@ export type PipelineOptions = {
  */
 export const INLINE_STAGES: JobStageName[] = ["fetch", "extract", "brief", "script"];
 
+export type BriefResult = {
+  job: JobData;
+  /** Kept so the render stage can reuse the page's images without refetching. */
+  site?: SiteExtract;
+};
+
 export async function runBriefPipeline({
   job,
   model,
   angle,
   onUpdate,
-}: PipelineOptions): Promise<JobData> {
+}: PipelineOptions): Promise<BriefResult> {
   let current: JobData = { ...job, status: "running", stages: initialStages() };
 
   const setStage = (
@@ -48,10 +55,10 @@ export async function runBriefPipeline({
     onUpdate(current);
   };
 
-  const fail = (message: string): JobData => {
+  const fail = (message: string): BriefResult => {
     current = { ...current, status: "failed", error: message };
     onUpdate(current);
-    return current;
+    return { job: current };
   };
 
   try {
@@ -85,19 +92,9 @@ export async function runBriefPipeline({
     current = { ...current, script };
     setStage("script", "done", `${script.scenes.length} scenes, ${script.totalDurationSec}s`);
 
-    // Everything past this point is not built yet, and the card should say so
-    // rather than showing stages that will never move.
-    current = {
-      ...current,
-      status: "queued",
-      notImplemented: true,
-      stages: current.stages.map((stage) =>
-        INLINE_STAGES.includes(stage.name) ? stage : { ...stage, status: "skipped" },
-      ),
-    };
     onUpdate(current);
 
-    return current;
+    return { job: current, site: extract };
   } catch (error) {
     if (error instanceof UnreachableSiteError) {
       setStage("fetch", "failed", error.kind);

@@ -10,8 +10,12 @@ import {
 } from "ai";
 import { z } from "zod";
 
+import { putJob } from "@/lib/jobs/store";
 import { runBriefPipeline } from "@/lib/pipeline/run";
+import { runRenderJob } from "@/lib/pipeline/render-job";
+import type { ResolvedKeys } from "@/lib/providers/keys";
 import type { ChatMessage } from "./chat-message";
+import { describeError } from "./errors";
 import { CHAT_INSTRUCTIONS } from "./prompts";
 import { initialStages, type JobData } from "./types";
 import { hostOf, normalizeUrl } from "./url";
@@ -30,6 +34,10 @@ export type ChatStreamOptions = {
   sanitizeError?: (message: string) => string;
   /** Off in unit tests, so routing can be checked without network or model calls. */
   runPipeline?: boolean;
+  /** Provider keys for the asset stage. Absent keys degrade, they do not fail. */
+  keys?: ResolvedKeys;
+  /** Brief and script generation model; separate from the chat model on purpose. */
+  scriptModel?: LanguageModel;
 };
 
 export function createChatStream({
@@ -37,6 +45,8 @@ export function createChatStream({
   messages,
   sanitizeError = (message) => message,
   runPipeline = true,
+  keys,
+  scriptModel,
 }: ChatStreamOptions) {
   return createUIMessageStream<ChatMessage>({
     execute: async ({ writer }) => {
@@ -95,9 +105,9 @@ export function createChatStream({
                 };
               }
 
-              const finished = await runBriefPipeline({
+              const { job: finished, site } = await runBriefPipeline({
                 job,
-                model,
+                model: scriptModel ?? model,
                 angle,
                 onUpdate: (update) =>
                   writer.write({ type: "data-job", id: jobId, data: update }),
@@ -112,6 +122,14 @@ export function createChatStream({
                 };
               }
 
+              // Rendering takes minutes, far longer than this turn may stay
+              // open, so it runs detached and reports into the job store for the
+              // card to poll. Deliberately not awaited.
+              putJob(finished);
+              if (site && keys) {
+                void runRenderJob({ job: finished, keys, site });
+              }
+
               return {
                 accepted: true,
                 jobId,
@@ -120,16 +138,23 @@ export function createChatStream({
                 oneLiner: finished.brief?.oneLiner,
                 scenes: finished.script?.scenes.length,
                 durationSec: finished.script?.totalDurationSec,
-                note: "The brief and script are already shown to the user in the job card — do not repeat them. Say in one short sentence that the script is ready but rendering is not connected yet. Do NOT claim a video exists or invent a URL.",
+                note: "The brief and script are already shown to the user in the job card, which now renders the video and updates itself — do not repeat them and do not list the scenes. Say in one short sentence that the script is ready and the video is rendering. Do NOT claim the video is finished and never invent a URL.",
               };
             },
           }),
         },
       });
 
-      writer.merge(toUIMessageStream({ stream: result.stream, sendStart: false }));
+      // toUIMessageStream masks errors before they ever reach the outer handler,
+      // so the explanation has to be attached here too.
+      writer.merge(
+        toUIMessageStream({
+          stream: result.stream,
+          sendStart: false,
+          onError: (error) => sanitizeError(describeError(error)),
+        }),
+      );
     },
-    onError: (error) =>
-      sanitizeError(error instanceof Error ? error.message : String(error)),
+    onError: (error) => sanitizeError(describeError(error)),
   });
 }

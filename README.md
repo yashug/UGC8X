@@ -16,16 +16,20 @@ Everything else is a normal conversation.
 |---|---|
 | M1 — chat, tool routing, job card, BYOK header | **done** |
 | M2 — URL → brief → script streamed into thread | **done** |
+| M3 — footage, voiceover, local Remotion render | **done** |
 | M1b — BYOK settings sheet, encrypted storage | next |
-| M3 — assets and local Remotion render | not started |
 | M4 — GitHub Actions renderer → public URL | not started |
 | M5 — Vercel + Neon + Inngest | not started |
 | M6 — design pass | not started |
 
-A product message now really does read the site, work out what the product is, and
-write a 25-second script — streamed into the thread stage by stage. **Nothing
-renders yet**: footage and voiceover are M3, the renderer is M4. The assistant is
-told to say so and never to claim a video exists.
+A product message reads the site, works out what the product is, writes a script,
+sources footage and a voiceover, and **renders an actual MP4** — around 90 seconds
+end to end. The brief and script stream into the thread while it works; once the
+chat turn ends the card polls for itself until the video appears.
+
+Rendering currently happens on the machine running the app, which is why M4 exists:
+Vercel functions cannot stay alive long enough, so the render moves to a GitHub
+Actions runner with the output going to R2.
 
 ## Running it
 
@@ -56,6 +60,21 @@ is fetched server-side, so every redirect hop is DNS-resolved and screened again
 private ranges — loopback, RFC1918, carrier-grade NAT, IPv6 unique-local, and
 IPv4-mapped IPv6, which is the usual way `169.254.169.254` sneaks through. See
 `lib/product/fetch.ts`.
+
+**Scene length comes from the audio, not the script.** The model guesses how long
+a line takes to say and is routinely a second or more out. Timing scenes off the
+measured WAV duration is the difference between a video that works and one that
+cuts the voiceover off mid-word. See `lib/media/wav.ts`.
+
+**Images are measured before they are placed.** A portrait screenshot goes in a
+phone frame; a landscape og:image is contained on a tinted ground. Putting the
+latter in the former cropped CalAI's headline clean off the sides — so the aspect
+ratio is read from the file header rather than assumed.
+
+**A designed card beats a confidently wrong photo.** The first pass used any page
+image it found and put a stock photo of a man at a harbour under the words
+"100k+ 5-star ratings". Images now have to look like the product to be shown, and
+anything below that bar falls through to type.
 
 **Proof points are copied, never invented.** The brief prompt forbids inventing a
 statistic, and the script prompt forbids using one that is not in the brief. A

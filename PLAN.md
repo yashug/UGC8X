@@ -249,7 +249,7 @@ component is isolated in M4.
 | M1 | ✅ Chat that talks. Gemini + tool routing, minimal UI, render stubbed | "hi" greets, "what can you do" pitches, a URL triggers |
 | M2 | ✅ URL → brief → script, streamed into the thread | It genuinely reads the site |
 | M1b | BYOK settings sheet, encrypted storage, key-derived provider resolution | Paste a key, capability upgrades |
-| M3 | Assets + local Remotion render → MP4 on disk | A real video exists |
+| M3 | ✅ Assets + local Remotion render → MP4 on disk | A real video exists |
 | M4 | GitHub Actions worker + R2 + callback | A real URL lands in chat |
 | M5 | Vercel + Neon + Inngest, deployed | Anyone can use it |
 | M6 | `/frontenddesign` pass | It looks like a product |

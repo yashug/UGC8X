@@ -2,7 +2,6 @@
 
 import type { JobData, JobStage, ProductBrief, VideoScript } from "@/lib/ai/types";
 import { hostOf } from "@/lib/ai/url";
-import { useLiveJob } from "./use-job";
 import { VideoPlayer } from "./video-player";
 
 function StageDot({ status }: { status: JobStage["status"] }) {
@@ -90,10 +89,7 @@ function ScriptBlock({ script }: { script: VideoScript }) {
   );
 }
 
-export function JobCard({ job: streamed }: { job: JobData }) {
-  // Keeps updating after the chat stream has closed.
-  const job = useLiveJob(streamed);
-
+export function JobCard({ job }: { job: JobData }) {
   // Skipped stages are ones this milestone never runs; counting them would make a
   // finished job look permanently incomplete.
   const counted = job.stages.filter((stage) => stage.status !== "skipped");

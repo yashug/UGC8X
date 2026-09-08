@@ -1,10 +1,14 @@
 import type { LanguageModel } from "ai";
 
+import { describeError } from "@/lib/ai/errors";
 import { generateBrief } from "@/lib/ai/brief";
 import { generateScript } from "@/lib/ai/script";
+import type { ResolvedKeys } from "@/lib/providers/keys";
+import type { UgcVideoProps } from "@/remotion/schema";
+import { buildAssets, voiceWarnings } from "./assets";
 import type { JobData, JobStageName, JobStage } from "@/lib/ai/types";
 import { initialStages } from "@/lib/ai/types";
-import { extractSite, type SiteExtract } from "@/lib/product/extract";
+import { extractSite } from "@/lib/product/extract";
 import { fetchSite, UnreachableSiteError } from "@/lib/product/fetch";
 
 export type PipelineUpdate = (job: JobData) => void;
@@ -14,31 +18,35 @@ export type PipelineOptions = {
   /** The scriptwriting model, which is not the same one that routes chat. */
   model: LanguageModel;
   angle?: string;
+  keys: ResolvedKeys;
   onUpdate: PipelineUpdate;
 };
 
 /**
- * M2 runs stages 1-4 inline: the whole point of the "streamed visibly" UX is that
- * the user reads the brief and the script while they wait. They complete in about
- * ten seconds, which is fine to hold the turn open for.
+ * Every stage runs inside the chat request.
  *
- * Stages 5-7 (assets, render, deliver) will NOT run here — a render is minutes
- * long and has to be handed to a durable job. That is M3/M4.
+ * That is a deliberate consequence of deploying to serverless. An earlier design
+ * built the assets after the response had been sent and let the card poll a job
+ * store for updates — which cannot work when each request may land on a different
+ * instance with its own memory, and when the instance is frozen the moment the
+ * response ends. Doing the work in the request removes the job store, the asset
+ * store, the polling endpoint and the whole class of bug with them.
+ *
+ * The cost is a request that runs for roughly half a minute. The brief and the
+ * script stream into the thread while it does, which is what fills the wait.
  */
-export const INLINE_STAGES: JobStageName[] = ["fetch", "extract", "brief", "script"];
 
-export type BriefResult = {
+export type PipelineResult = {
   job: JobData;
-  /** Kept so the render stage can reuse the page's images without refetching. */
-  site?: SiteExtract;
 };
 
-export async function runBriefPipeline({
+export async function runVideoPipeline({
   job,
   model,
   angle,
+  keys,
   onUpdate,
-}: PipelineOptions): Promise<BriefResult> {
+}: PipelineOptions): Promise<PipelineResult> {
   let current: JobData = { ...job, status: "running", stages: initialStages() };
 
   const setStage = (
@@ -55,7 +63,7 @@ export async function runBriefPipeline({
     onUpdate(current);
   };
 
-  const fail = (message: string): BriefResult => {
+  const fail = (message: string): PipelineResult => {
     current = { ...current, status: "failed", error: message };
     onUpdate(current);
     return { job: current };
@@ -92,15 +100,53 @@ export async function runBriefPipeline({
     current = { ...current, script };
     setStage("script", "done", `${script.scenes.length} scenes, ${script.totalDurationSec}s`);
 
-    onUpdate(current);
+    setStage("assets", "active");
+    const assets = await buildAssets({
+      keys,
+      brief,
+      script,
+      site: extract,
+    });
 
-    return { job: current, site: extract };
+    const video: UgcVideoProps = {
+      productName: assets.productName,
+      cta: assets.cta,
+      accentColor: assets.accentColor,
+      credit: assets.credit,
+      scenes: assets.scenes.map((scene) => ({
+        index: scene.index,
+        durationSec: scene.durationSec,
+        voiceover: scene.voiceover,
+        onScreenText: scene.onScreenText,
+        audioFile: scene.audioFile,
+        imageFile: scene.imageFile,
+        videoFile: scene.videoFile,
+        imageFit: scene.imageFit,
+      })),
+    };
+
+    const warnings = voiceWarnings(assets.voice);
+    current = {
+      ...current,
+      status: "done",
+      video,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
+    setStage(
+      "assets",
+      "done",
+      `${assets.scenes.length} scenes, ${Math.round(assets.totalDurationSec)}s`,
+    );
+
+    return { job: current };
   } catch (error) {
     if (error instanceof UnreachableSiteError) {
       setStage("fetch", "failed", error.kind);
       return fail(error.message);
     }
-    const message = error instanceof Error ? error.message : String(error);
-    return fail(`Something broke while reading that site: ${message}`);
+    // A quota failure is by far the most likely thing to go wrong on the shared
+    // key, and it is the one the user can actually do something about, so it gets
+    // the explanation rather than a raw provider string.
+    return fail(describeError(error));
   }
 }

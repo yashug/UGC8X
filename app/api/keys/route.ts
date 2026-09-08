@@ -1,8 +1,17 @@
-import { ensureSessionId, getSessionId } from "@/lib/keys/session";
-import { deleteKey, maskedKeys, saveKey } from "@/lib/keys/store";
 import { validateKey } from "@/lib/keys/validate";
 import { CAPABILITIES } from "@/lib/providers/capabilities";
 import { PROVIDERS, type ProviderName } from "@/lib/providers/keys";
+
+/**
+ * Keys are held by the browser, not by this server.
+ *
+ * They used to be encrypted and kept server-side, because the render ran minutes
+ * after the request that started it and needed to read them. Nothing runs after
+ * the response any more, so that storage bought nothing and could not work across
+ * serverless instances anyway. The browser keeps its own keys and sends them per
+ * request; this endpoint only reports what the server can do on its own, and
+ * checks a key before the browser commits to it.
+ */
 
 const SERVER_ENV: Record<ProviderName, string> = {
   google: "GOOGLE_GENERATIVE_AI_API_KEY",
@@ -12,25 +21,14 @@ const SERVER_ENV: Record<ProviderName, string> = {
   pexels: "PEXELS_API_KEY",
 };
 
-function status(sessionId: string | null) {
-  const masks = sessionId ? maskedKeys(sessionId) : {};
-
-  return CAPABILITIES.map((capability) => {
-    const mask = masks[capability.provider];
-    const hasServer = Boolean(process.env[SERVER_ENV[capability.provider]]);
-
-    return {
-      ...capability,
-      // Precedence, and it is the user's key that wins.
-      source: mask ? "user" : hasServer ? "server" : "none",
-      mask: mask ?? null,
-    };
-  });
-}
-
 export async function GET() {
   return Response.json(
-    { capabilities: status(await getSessionId()) },
+    {
+      capabilities: CAPABILITIES.map((capability) => ({
+        ...capability,
+        serverHasKey: Boolean(process.env[SERVER_ENV[capability.provider]]),
+      })),
+    },
     { headers: { "cache-control": "no-store" } },
   );
 }
@@ -48,32 +46,13 @@ export async function POST(request: Request) {
     return Response.json({ error: "Provider and key are required." }, { status: 400 });
   }
 
-  // Checked before it is stored, so a bad key fails here and not two minutes
-  // into a render.
+  // Checked before the browser saves it, so a bad key fails at paste time rather
+  // than halfway through a video.
   const validation = await validateKey(provider, key);
   if (!validation.ok) {
     return Response.json({ error: validation.reason }, { status: 400 });
   }
 
-  const sessionId = await ensureSessionId();
-  saveKey(sessionId, provider, key.trim());
-
-  return Response.json({
-    capabilities: status(sessionId),
-    // Says plainly when a key was stored without being checked.
-    verified: validation.verified,
-    note: validation.note ?? null,
-  });
-}
-
-export async function DELETE(request: Request) {
-  const provider = new URL(request.url).searchParams.get("provider") as ProviderName | null;
-  if (!provider || !PROVIDERS.includes(provider)) {
-    return Response.json({ error: "Unknown provider." }, { status: 400 });
-  }
-
-  const sessionId = await getSessionId();
-  if (sessionId) deleteKey(sessionId, provider);
-
-  return Response.json({ capabilities: status(sessionId) });
+  // Deliberately not stored. The response says it is usable; the browser keeps it.
+  return Response.json({ verified: validation.verified, note: validation.note ?? null });
 }

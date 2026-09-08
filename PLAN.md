@@ -251,7 +251,7 @@ component is isolated in M4.
 | M1b | ✅ BYOK settings sheet, encrypted storage, key-derived provider resolution | Paste a key, capability upgrades |
 | M3 | ✅ Assets + local Remotion render → MP4 on disk | A real video exists |
 | M4 | ❌ Removed. Videos are assembled client-side by a Remotion Player, so there is nothing to render, store or link to | — |
-| M5 | Vercel + Neon + Inngest, deployed | Anyone can use it |
+| M5 | Vercel, deployed. No Neon and no Inngest: the pipeline is stateless, so there is nothing to persist or queue | Anyone can use it |
 | M6 | `/frontenddesign` pass | It looks like a product |
 
 ---

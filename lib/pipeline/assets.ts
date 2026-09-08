@@ -1,5 +1,4 @@
 import type { ProductBrief, VideoScript } from "@/lib/ai/types";
-import { putAsset } from "@/lib/assets/store";
 import { fetchBytes } from "@/lib/media/download";
 import { readImageSize } from "@/lib/media/image-size";
 import { wavDurationSec } from "@/lib/media/wav";
@@ -38,6 +37,7 @@ export type VideoAssets = {
   voice: { spoken: number; total: number; reason?: string };
 };
 
+const SPEECH_CONCURRENCY = 2;
 const MIN_SCENE_SEC = 2.5;
 const MAX_SCENE_SEC = 10;
 const TAIL_PADDING_SEC = 0.45;
@@ -137,13 +137,11 @@ async function speakWithRetry(
 }
 
 export async function buildAssets({
-  jobId,
   keys,
   brief,
   script,
   site,
 }: {
-  jobId: string;
   keys: ResolvedKeys;
   brief: ProductBrief;
   script: VideoScript;
@@ -154,19 +152,20 @@ export async function buildAssets({
   // The hook clip is independent of speech, so it can run alongside.
   const hookPromise = fetchHookClip(keys, brief).catch(() => null);
 
-  // Voiceover is generated ONE AT A TIME on purpose. Five concurrent calls is a
-  // reliable way to trip a per-minute rate limit, and a rate-limited scene used
-  // to become silence that nothing reported.
+  // Two at a time. Five at once reliably tripped the per-minute rate limit and
+  // turned scenes silent; one at a time was reliable but slow enough to threaten
+  // the serverless request budget now that this runs inside the chat turn.
   const voices: (Voiceover | null)[] = [];
   let voiceReason: string | undefined;
 
-  for (const scene of script.scenes) {
-    const outcome = await speakWithRetry(keys, scene.voiceover);
-    if (outcome.voice) {
+  for (let i = 0; i < script.scenes.length; i += SPEECH_CONCURRENCY) {
+    const batch = script.scenes.slice(i, i + SPEECH_CONCURRENCY);
+    const outcomes = await Promise.all(
+      batch.map((scene) => speakWithRetry(keys, scene.voiceover)),
+    );
+    for (const outcome of outcomes) {
       voices.push(outcome.voice);
-    } else {
-      voices.push(null);
-      voiceReason ??= outcome.reason;
+      if (!outcome.voice) voiceReason ??= outcome.reason;
     }
   }
 
@@ -209,8 +208,11 @@ export async function buildAssets({
     let spokenSec = 0;
 
     if (voice && voice.source !== "none" && voice.audio.byteLength > 0) {
-      // Held in memory and served same-origin; never written anywhere.
-      audioFile = putAsset(jobId, `vo-${index}.wav`, voice.audio, "audio/wav");
+      // Inlined as a data URI rather than served from a server-side cache.
+      // The app runs on serverless instances that do not share memory, so a
+      // cached asset would 404 as soon as the Player asked a different one.
+      // Nothing is stored anywhere as a result — the video travels whole.
+      audioFile = `data:audio/wav;base64,${Buffer.from(voice.audio).toString("base64")}`;
       spokenSec = wavDurationSec(voice.audio);
     }
 

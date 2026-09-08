@@ -2,13 +2,38 @@
 
 import { useEffect, useState } from "react";
 import type { Capability } from "@/lib/providers/capabilities";
+import { maskKey, type ProviderName } from "@/lib/providers/keys";
 
-export type Row = Capability & {
-  source: "user" | "server" | "none";
-  mask: string | null;
-};
+/**
+ * Keys live in this browser and nowhere else.
+ *
+ * They are sent with each chat request and used for the length of that request.
+ * The server stores nothing, which is both simpler than the encrypted
+ * session store this replaced and strictly more private.
+ */
+export const KEYS_STORAGE = "ugc8x-keys";
 
-/** Shared by the sheet and by whoever opens it, so the fetch can live in the click. */
+export type Row = Capability & { serverHasKey: boolean };
+
+export type StoredKeys = Partial<Record<ProviderName, string>>;
+
+export function readStoredKeys(): StoredKeys {
+  try {
+    const raw = localStorage.getItem(KEYS_STORAGE);
+    return raw ? (JSON.parse(raw) as StoredKeys) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredKeys(keys: StoredKeys): void {
+  try {
+    localStorage.setItem(KEYS_STORAGE, JSON.stringify(keys));
+  } catch {
+    // Private browsing. The key still works for this page's lifetime.
+  }
+}
+
 export async function fetchCapabilities(): Promise<Row[]> {
   try {
     const response = await fetch("/api/keys", { cache: "no-store" });
@@ -19,13 +44,15 @@ export async function fetchCapabilities(): Promise<Row[]> {
   }
 }
 
-const SOURCE_LABEL: Record<Row["source"], string> = {
+type Source = "user" | "server" | "none";
+
+const SOURCE_LABEL: Record<Source, string> = {
   user: "your key",
   server: "shared key",
   none: "not available",
 };
 
-function SourceTag({ source }: { source: Row["source"] }) {
+function SourceTag({ source }: { source: Source }) {
   const tone =
     source === "user"
       ? "border-ok/40 text-ok"
@@ -42,63 +69,67 @@ function SourceTag({ source }: { source: Row["source"] }) {
 
 function CapabilityRow({
   row,
-  onSaved,
+  stored,
+  onChange,
 }: {
   row: Row;
-  onSaved: (rows: Row[]) => void;
+  stored: StoredKeys;
+  onChange: (keys: StoredKeys) => void;
 }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
+  const mine = stored[row.provider];
+  const source: Source = mine ? "user" : row.serverHasKey ? "server" : "none";
+
   async function save() {
-    if (!value.trim()) return;
+    const key = value.trim();
+    if (!key) return;
     setBusy(true);
     setError(null);
     try {
       const response = await fetch("/api/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ provider: row.provider, key: value.trim() }),
+        body: JSON.stringify({ provider: row.provider, key }),
       });
       const body = await response.json();
       if (!response.ok) {
         setError(body.error ?? "That key was not accepted.");
         return;
       }
+      // Only the browser ever holds it.
+      const next = { ...stored, [row.provider]: key };
+      writeStoredKeys(next);
+      onChange(next);
       setValue("");
       setNote(body.note ?? null);
-      onSaved(body.capabilities);
     } catch {
-      setError("Couldn't save that. Try again.");
+      setError("Couldn't check that key. Try again.");
     } finally {
       setBusy(false);
     }
   }
 
-  async function remove() {
-    setBusy(true);
-    try {
-      const response = await fetch(`/api/keys?provider=${row.provider}`, {
-        method: "DELETE",
-      });
-      const body = await response.json();
-      if (response.ok) onSaved(body.capabilities);
-    } finally {
-      setBusy(false);
-    }
+  function remove() {
+    const next = { ...stored };
+    delete next[row.provider];
+    writeStoredKeys(next);
+    onChange(next);
+    setNote(null);
   }
 
   return (
     <div className="border-t border-line py-3.5 first:border-t-0">
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-[13px] font-medium text-ink">{row.label}</p>
-        <SourceTag source={row.source} />
+        <SourceTag source={source} />
       </div>
 
       <p className="mt-1 text-[12px] leading-5 text-muted">
-        {row.source === "user" ? (
+        {source === "user" ? (
           <>Using your key — {row.upgrade}.</>
         ) : (
           <>
@@ -107,16 +138,15 @@ function CapabilityRow({
         )}
       </p>
 
-      {row.source === "user" ? (
+      {mine ? (
         <div className="mt-2 flex items-center gap-2">
           <code className="rounded-md border border-line bg-sunk px-2 py-1 font-mono text-[11px] text-muted">
-            {row.mask}
+            {maskKey(mine)}
           </code>
           <button
             type="button"
             onClick={remove}
-            disabled={busy}
-            className="text-[12px] text-faint underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
+            className="text-[12px] text-faint underline-offset-2 hover:text-danger hover:underline"
           >
             Remove
           </button>
@@ -161,18 +191,15 @@ function CapabilityRow({
   );
 }
 
-/**
- * Presentational on purpose. The initial fetch happens in the click that opens
- * the sheet rather than in an effect here, so opening is the event that loads
- * the data instead of the render reacting to itself.
- */
 export function SettingsSheet({
   rows,
-  onRowsChange,
+  stored,
+  onStoredChange,
   onClose,
 }: {
   rows: Row[] | null;
-  onRowsChange: (rows: Row[]) => void;
+  stored: StoredKeys;
+  onStoredChange: (keys: StoredKeys) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -206,9 +233,8 @@ export function SettingsSheet({
 
         <p className="px-5 pb-3 text-[12px] leading-5 text-muted">
           Bring your own keys for better output. Each one upgrades a single part of
-          the pipeline — everything else keeps working as it is. Keys are encrypted,
-          scoped to this browser, expire after a day, and are never shown back to
-          you in full.
+          the pipeline and leaves the rest alone. Keys are kept in this browser and
+          sent with your requests — the server never stores them.
         </p>
 
         <div className="px-5 pb-8">
@@ -216,7 +242,12 @@ export function SettingsSheet({
             <p className="py-6 text-[12px] text-faint">Loading…</p>
           ) : (
             rows.map((row) => (
-              <CapabilityRow key={row.provider} row={row} onSaved={onRowsChange} />
+              <CapabilityRow
+                key={row.provider}
+                row={row}
+                stored={stored}
+                onChange={onStoredChange}
+              />
             ))
           )}
         </div>

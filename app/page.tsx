@@ -6,9 +6,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Composer } from "@/components/chat/composer";
 import {
+  KEYS_STORAGE,
   SettingsSheet,
   fetchCapabilities,
+  readStoredKeys,
   type Row as CapabilityRow,
+  type StoredKeys,
 } from "@/components/settings/settings-sheet";
 import { EmptyState } from "@/components/chat/empty-state";
 import { JobCard } from "@/components/chat/job-card";
@@ -16,17 +19,17 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import type { ChatMessage } from "@/lib/ai/chat-message";
 import { USER_KEYS_HEADER } from "@/lib/providers/keys";
 
-const KEYS_STORAGE = "ugc8x-keys";
-
 export default function Page() {
   const [input, setInput] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [capabilities, setCapabilities] = useState<CapabilityRow[] | null>(null);
+  const [storedKeys, setStoredKeys] = useState<StoredKeys>({});
 
   // Opening is the event that loads the data, so the sheet needs no effect.
   function openSettings() {
     setSettingsOpen(true);
     setCapabilities(null);
+    setStoredKeys(readStoredKeys());
     void fetchCapabilities().then(setCapabilities);
   }
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -89,7 +92,8 @@ export default function Page() {
       {settingsOpen ? (
         <SettingsSheet
           rows={capabilities}
-          onRowsChange={setCapabilities}
+          stored={storedKeys}
+          onStoredChange={setStoredKeys}
           onClose={() => setSettingsOpen(false)}
         />
       ) : null}

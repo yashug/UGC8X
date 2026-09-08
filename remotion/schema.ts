@@ -18,15 +18,6 @@ export type UgcVideoProps = {
   credit?: string;
 };
 
-/**
- * Every asset is now a URL the browser fetches itself: an absolute one for the
- * hook clip and product imagery, or a same-origin path for the voiceover this
- * server generated. Nothing resolves out of a public directory any more.
- */
-export function isFetchableUrl(value: string): boolean {
-  return /^(https?:)?\/\//i.test(value) || value.startsWith("/");
-}
-
 export const FPS = 30;
 export const WIDTH = 1080;
 export const HEIGHT = 1920;

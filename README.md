@@ -27,11 +27,15 @@ sources footage and a voiceover, and **renders an actual MP4** — around 90 sec
 end to end. The brief and script stream into the thread while it works; once the
 chat turn ends the card polls for itself until the video appears.
 
-**Nothing is rendered and nothing is stored.** The video is assembled in the
+**Nothing is rendered, stored, or remembered.** The video is assembled in the
 browser by a Remotion Player, playing the same composition a server would have
 rendered. The hook clip streams from Pexels' CDN, product imagery from the
 product's own site, and the voiceover — the one asset the server has to generate,
-because it needs an API key — is held in memory and served same-origin.
+because it needs an API key — is inlined into the response as a data URI.
+
+The server keeps no state at all: no database, no object storage, no job store,
+no session. There are two routes, `/api/chat` and `/api/keys`, and the second one
+only validates a key and hands it straight back.
 
 This replaced an earlier design that rendered an MP4 on a GitHub Actions runner
 and stored it in R2. That whole path is gone: no object storage, no render
@@ -51,6 +55,28 @@ npm run dev
 
 With no key at all the app still runs and tells you which free key to add.
 
+## Deploying
+
+There is nothing to provision. No database, no bucket, no queue, no worker.
+
+1. Import the repo at [vercel.com/new](https://vercel.com/new).
+2. Set two environment variables:
+   - `GOOGLE_GENERATIVE_AI_API_KEY` — free, no card, from
+     [AI Studio](https://aistudio.google.com/apikey)
+   - `PEXELS_API_KEY` — free, from [Pexels](https://www.pexels.com/api/)
+3. Deploy.
+
+Optional: `ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY`, `FAL_KEY` upgrade individual
+capabilities. Anyone can also paste their own keys in Settings, which stay in
+their browser.
+
+**On plan limits.** The whole pipeline runs inside one request, so it needs the
+function to live for roughly half a minute. Vercel Hobby caps a function at 60s,
+which fits but is not generous; if renders start timing out, Pro with fluid
+compute lifts the ceiling. The bigger practical limit is Gemini's free tier —
+a shared key is metered per minute and per day, so a public deployment will hit
+it. That is exactly what the BYOK settings sheet is for.
+
 ## Known limitations
 
 - Sites whose `og:image` is a logo rather than a screenshot produce a logo-heavy
@@ -62,8 +88,10 @@ With no key at all the app still runs and tells you which free key to add.
 - No MP4 and no shareable link, by design. Producing a file would mean either a
   server render or client-side WebCodecs encoding, which cannot load cross-origin
   assets without a proxy.
-- Browser playback has been verified only through its data: the props, the asset
-  endpoint and the build. Open the app and watch one to confirm the picture.
+- Browser playback has been verified only through its data: the props, the build
+  and the served audio. Open the app and watch one to confirm the picture.
+- The voiceover travels inline, about 2MB of base64 per video. That is fine for
+  one video in a thread and would need revisiting for a long conversation.
 
 ## Design notes
 
@@ -100,7 +128,13 @@ image it found and put a stock photo of a man at a harbour under the words
 "100k+ 5-star ratings". Images now have to look like the product to be shown, and
 anything below that bar falls through to type.
 
-**Keys are checked before they are stored, and we say when we couldn't.** A bad
+**Keys never reach the server's storage, because there isn't any.** They live in
+the visitor's browser and ride along with each request. An earlier version
+encrypted them server-side with AES-GCM and a session cookie, which was the right
+answer while the render outlived the request — and became both unnecessary and
+broken once nothing ran after the response. Deleting it was the fix.
+
+**Keys are checked before they are saved, and we say when we couldn't.** A bad
 key should fail at paste time, not two minutes into a render. But Pexels answers
 a search identically with a valid key, a garbage key, or no key at all — an early
 version happily accepted the string `obviously-not-a-real-key`. Validation now

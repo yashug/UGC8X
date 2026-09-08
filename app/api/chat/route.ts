@@ -3,24 +3,23 @@ import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } 
 import type { ChatMessage } from "@/lib/ai/chat-message";
 import { createChatStream } from "@/lib/ai/chat";
 import { NO_KEY_MESSAGE } from "@/lib/ai/prompts";
-import { getSessionId } from "@/lib/keys/session";
-import { readKeys } from "@/lib/keys/store";
 import { readUserKeys, redact, resolveKeys } from "@/lib/providers/keys";
 import { chatModel, scriptModel, NoLlmKeyError } from "@/lib/providers/llm";
 
+/**
+ * The whole pipeline — read the site, write the brief and script, generate the
+ * voiceover — runs inside this request, so it needs the longest window the plan
+ * allows. 60s is the Vercel Hobby ceiling; Pro with fluid compute allows more,
+ * which is worth setting if renders start timing out.
+ */
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const body = (await req.json()) as { messages: UIMessage[] };
 
-  // Session-stored keys are the real source: the render runs long after this
-  // request ends, so a key must be readable server-side. The header remains as a
-  // fallback for callers that have not saved anything.
-  const sessionId = await getSessionId();
-  const resolved = resolveKeys({
-    ...readUserKeys(req),
-    ...(sessionId ? readKeys(sessionId) : {}),
-  });
+  // The browser holds its own keys and sends them with the request. Nothing runs
+  // after the response, so nothing needs them for longer than this.
+  const resolved = resolveKeys(readUserKeys(req));
 
   let llm;
   try {

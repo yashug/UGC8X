@@ -11,10 +11,8 @@ import {
 } from "ai";
 import { z } from "zod";
 
-import { putJob } from "@/lib/jobs/store";
-import { runBriefPipeline } from "@/lib/pipeline/run";
-import { prepareVideo } from "@/lib/pipeline/prepare-video";
-import type { ResolvedKeys } from "@/lib/providers/keys";
+import { runVideoPipeline } from "@/lib/pipeline/run";
+import { resolveKeys, type ResolvedKeys } from "@/lib/providers/keys";
 import type { ChatMessage } from "./chat-message";
 import { describeError } from "./errors";
 import { CHAT_INSTRUCTIONS } from "./prompts";
@@ -100,10 +98,11 @@ async function startVideoJob({
     return { accepted: true, jobId, url: normalized, status: "queued", note: "Pipeline disabled in this environment." };
   }
 
-  const { job: finished, site } = await runBriefPipeline({
+  const { job: finished } = await runVideoPipeline({
     job,
     model,
     angle,
+    keys: keys ?? resolveKeys(),
     onUpdate: (update) => writer.write({ type: "data-job", id: jobId, data: update }),
   });
 
@@ -116,13 +115,6 @@ async function startVideoJob({
     };
   }
 
-  // Assembling the assets takes long enough to outlive this turn, so it runs
-  // detached and reports into the job store for the card to poll.
-  putJob(finished);
-  if (site && keys) {
-    void prepareVideo({ job: finished, keys, site });
-  }
-
   return {
     accepted: true,
     jobId,
@@ -131,7 +123,7 @@ async function startVideoJob({
     oneLiner: finished.brief?.oneLiner,
     scenes: finished.script?.scenes.length,
     durationSec: finished.script?.totalDurationSec,
-    note: "The brief and script are already shown to the user in the job card, which is assembling the video and will play it there — do not repeat them and do not list the scenes. Say in one short sentence that the script is ready and the video is being put together. There is no URL and no file: the video plays in the chat. Never invent a link.",
+    note: "The video is finished and already playing in the job card above, along with the brief and script — do not repeat them and do not list the scenes. Say one short sentence, e.g. that the video is ready to watch. There is no URL and no file: it plays right there in the chat. Never invent a link.",
   };
 }
 

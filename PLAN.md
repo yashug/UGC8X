@@ -1,4 +1,4 @@
-# UGC Video Chat — Build Plan
+# UGC8X — Build Plan
 
 A chat app. One input, one thread. Send it a product URL, it works out what the
 product is, assembles a short UGC-style video, and drops the URL back in the thread.
@@ -21,7 +21,9 @@ Status: **plan agreed, not yet built.**
 | Render flow | One-shot, streamed visibly | Fires on the first message; brief and script stream into the thread while it renders |
 | Render host | GitHub Actions worker | Genuinely free, no AWS account, no card |
 | Deploy | Vercel, persisted | Graders can open a URL and use it |
-| Design | Stark and minimal | The video card is the only colour on the page |
+| Design | Stark and minimal, light + dark | The video card is the only colour on the page |
+| Keys | BYOK, user keys override server keys | Better output for anyone who brings a key; costs us nothing |
+| Repo | Public | Unlimited Actions minutes, and the logs ship publicly anyway |
 
 **Cost per video: $0.00 on the free lane. ~$0.35 on the pro lane.**
 
@@ -35,16 +37,23 @@ it is what lets the pipeline degrade one capability at a time instead of failing
 
 ```ts
 // lib/providers/registry.ts
-export const providers = {
-  llm:   pick(GeminiFlash,       ClaudeSonnet),
-  hook:  pick(PexelsStockClip,   FalVideoGen),
-  voice: pick(FreeTts,           ElevenLabsTimestamped),
-  shots: pick(OgImageAndMshots,  HeadlessCapture),
+// Tier is DERIVED, not configured. Best available key wins, per capability.
+export function resolveProviders(keys: ResolvedKeys) {
+  return {
+    llm:   keys.anthropic  ? ClaudeSonnet(keys)  : GeminiFlash(keys),
+    hook:  keys.fal        ? FalVideoGen(keys)   : PexelsStockClip(keys),
+    voice: keys.elevenlabs ? ElevenLabs(keys)    : FreeTts(keys),
+    shots: keys.browserless? HeadlessCapture(keys): OgImageAndMshots(keys),
+  }
 }
-// every provider implements isAvailable() + one typed method
+// key precedence, per provider: user's key > our server key > free default > disabled
 ```
 
-| Capability | Free lane (default) | Pro lane (`PROVIDER_TIER=pro`) |
+There is no `PROVIDER_TIER` switch. A user who pastes a fal.ai key gets an AI-generated
+hook clip on their very next render, and everything else stays exactly where it was.
+Upgrades are per-capability, not all-or-nothing.
+
+| Capability | Free lane (no key) | Upgraded lane (key present) |
 |---|---|---|
 | Chat + script | Gemini 2.5 Flash | Claude Sonnet 5 / Opus 5 |
 | Read the site | `fetch` + Readability, `r.jina.ai` fallback | Firecrawl |
@@ -128,10 +137,62 @@ SSE stays an easy upgrade — the endpoint already returns a stage cursor.
 
 ---
 
+## 5b. Bring your own keys
+
+Users can paste their own provider keys to get better output. This is the only part of
+the system with real security weight, so the constraints are written down explicitly.
+
+**The forcing constraint:** the render pipeline is asynchronous. Steps 5-6 run minutes
+after the user's HTTP request has ended, so a key held only in the browser is gone by the
+time it is needed. Keys therefore have to be readable server-side — which means they have
+to be encrypted, scoped and expiring.
+
+```
+browser  ──POST /api/keys──►  AES-256-GCM encrypt  ──►  user_keys row
+                              (ENCRYPTION_KEY env)      scoped to session id
+                                                        expires_at = now + 24h
+job step ──► decrypt in-process ──► call provider ──► discard
+```
+
+**Rules, enforced in code:**
+
+| Rule | Why |
+|---|---|
+| AES-256-GCM at rest, key from `ENCRYPTION_KEY` | A database leak alone must not yield keys |
+| Never returned to the client — only a mask, `sk-ant-...9f2c` | Nothing to steal from the UI or a screenshot |
+| Never a return value of an Inngest step | Step outputs are stored in Inngest's cloud |
+| Never in the R2 render payload | The Actions worker is public-ish; it must not need keys |
+| Scoped to an anonymous session id, `expires_at` 24h, explicit delete button | Least privilege, and the user stays in control |
+| Redacted from all logging and error paths | Provider errors love to echo the request back |
+
+The GitHub Actions worker never receives a key at all: every asset that needs one is
+produced in step 5, inside our own function, and the worker only ever sees asset URLs.
+That property is worth protecting in review.
+
+**Validation on entry.** A pasted key gets a cheap probe call before it is stored, so the
+user is told immediately whether it works instead of finding out two minutes into a render.
+
+**Rate limiting.** The app is public and the no-key path spends *our* Gemini quota
+(~1,500 req/day). Anonymous sessions get a modest render allowance per hour; sessions
+with their own keys are limited far more loosely, since they are paying for themselves.
+
+**UI.** A settings sheet listing each capability, its current source
+(`your key` / `our key` / `free default`), and plainly what a key would upgrade:
+
+```
+Script quality   our key: Gemini 2.5 Flash      + Anthropic key -> Claude Sonnet 5
+Hook clip        free:    Pexels stock footage  + fal.ai key    -> AI-generated creator
+Voiceover        free:    FreeTTS               + ElevenLabs    -> natural voice, karaoke captions
+```
+
+---
+
 ## 6. Data model (Neon + Drizzle)
 
 ```
-conversations  id, title, createdAt
+sessions       id, createdAt, lastSeenAt            anonymous, cookie-backed
+user_keys      sessionId, provider, ciphertext, iv, tag, mask, expiresAt
+conversations  id, sessionId, title, createdAt
 messages       id, conversationId, role, parts jsonb, createdAt
 jobs           id, conversationId, messageId, url, status, tier,
                brief jsonb, script jsonb, assets jsonb, stages jsonb,
@@ -186,6 +247,7 @@ component is isolated in M4.
 | # | Deliverable | Demonstrates |
 |---|---|---|
 | M1 | Chat that talks. Gemini + tool routing, minimal UI, render stubbed | "hi" greets, "what can you do" pitches, a URL triggers |
+| M1b | BYOK settings sheet, encrypted storage, key-derived provider resolution | Paste a key, capability upgrades |
 | M2 | URL → brief → script, streamed into the thread | It genuinely reads the site |
 | M3 | Assets + local Remotion render → MP4 on disk | A real video exists |
 | M4 | GitHub Actions worker + R2 + callback | A real URL lands in chat |
@@ -205,6 +267,7 @@ All free, no card required for any of them.
 - [ ] Inngest account (`INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`)
 - [ ] GitHub PAT, Actions: write (`GH_RENDER_TOKEN`, `GH_RENDER_REPO`)
 - [ ] Vercel project linked
+- [ ] `ENCRYPTION_KEY` — 32 random bytes, for BYOK encryption at rest
 
 Pro lane, later and optional: `ANTHROPIC_API_KEY`, `FAL_KEY`, `ELEVENLABS_API_KEY`.
 
@@ -212,10 +275,9 @@ Pro lane, later and optional: `ANTHROPIC_API_KEY`, `FAL_KEY`, `ELEVENLABS_API_KE
 
 ## 11. Open, non-blocking
 
-- App name — needed for the header and `<title>`
-- Dark mode, or light only
 - Follow-up edits ("make it funnier") — deferred out of v1, but `jobs` is shaped to allow
   a re-render from an existing brief without re-scraping
+- Whether BYOK keys should optionally persist beyond 24h for returning users
 
 ## 12. Noted risks
 

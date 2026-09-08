@@ -45,7 +45,6 @@ export type VideoScene = {
 };
 
 export type VideoScript = {
-  hook: string;
   totalDurationSec: number;
   scenes: VideoScene[];
 };

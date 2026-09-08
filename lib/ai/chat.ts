@@ -10,30 +10,33 @@ import {
 } from "ai";
 import { z } from "zod";
 
+import { runBriefPipeline } from "@/lib/pipeline/run";
 import type { ChatMessage } from "./chat-message";
 import { CHAT_INSTRUCTIONS } from "./prompts";
 import { initialStages, type JobData } from "./types";
 import { hostOf, normalizeUrl } from "./url";
 
 /**
- * M1: the tool accepts a job and streams a card, but nothing renders yet.
- * Assets land in M3 and the GitHub Actions renderer in M4. Everything the model
- * is told below is deliberately truthful — it must never claim a video exists.
- * Flip this constant when the pipeline is connected.
+ * M2: the pipeline reads the site and writes a brief and a script, streaming each
+ * into the thread as it lands. Assets (M3) and the renderer (M4) are not built,
+ * so nothing produces a video yet. Everything the model is told below is
+ * deliberately truthful — it must never claim a video exists.
  */
-export const RENDER_PIPELINE_CONNECTED = false;
 
 export type ChatStreamOptions = {
   model: LanguageModel;
   messages: UIMessage[];
   /** Redacts provider keys out of anything surfaced to the client. */
   sanitizeError?: (message: string) => string;
+  /** Off in unit tests, so routing can be checked without network or model calls. */
+  runPipeline?: boolean;
 };
 
 export function createChatStream({
   model,
   messages,
   sanitizeError = (message) => message,
+  runPipeline = true,
 }: ChatStreamOptions) {
   return createUIMessageStream<ChatMessage>({
     execute: async ({ writer }) => {
@@ -74,26 +77,51 @@ export function createChatStream({
                 jobId,
                 url: normalized,
                 productName: productName ?? hostOf(normalized),
-                status: RENDER_PIPELINE_CONNECTED ? "running" : "queued",
+                status: "running",
                 stages: initialStages(),
-                notImplemented: !RENDER_PIPELINE_CONNECTED,
               };
 
-              // A data part, not text — so the same id can be rewritten later to
-              // update the card in place as real stages complete.
+              // A data part, not text — so the same id can be rewritten as the
+              // pipeline advances, updating the card in place.
               writer.write({ type: "data-job", id: jobId, data: job });
 
-              if (!RENDER_PIPELINE_CONNECTED) {
+              if (!runPipeline) {
                 return {
                   accepted: true,
                   jobId,
                   url: normalized,
                   status: "queued",
-                  note: "The render pipeline is not connected yet, so no video will be produced. Tell the user the job was accepted but rendering is not wired up yet. Do NOT claim a video exists or invent a URL.",
+                  note: "Pipeline disabled in this environment.",
                 };
               }
 
-              return { accepted: true, jobId, url: normalized, status: "running", angle };
+              const finished = await runBriefPipeline({
+                job,
+                model,
+                angle,
+                onUpdate: (update) =>
+                  writer.write({ type: "data-job", id: jobId, data: update }),
+              });
+
+              if (finished.status === "failed") {
+                return {
+                  accepted: false,
+                  jobId,
+                  reason: finished.error,
+                  note: "Relay this to the user in one short sentence. Do not retry the tool.",
+                };
+              }
+
+              return {
+                accepted: true,
+                jobId,
+                url: normalized,
+                product: finished.brief?.name,
+                oneLiner: finished.brief?.oneLiner,
+                scenes: finished.script?.scenes.length,
+                durationSec: finished.script?.totalDurationSec,
+                note: "The brief and script are already shown to the user in the job card — do not repeat them. Say in one short sentence that the script is ready but rendering is not connected yet. Do NOT claim a video exists or invent a URL.",
+              };
             },
           }),
         },

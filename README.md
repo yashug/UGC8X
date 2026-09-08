@@ -15,16 +15,17 @@ Everything else is a normal conversation.
 | Milestone | State |
 |---|---|
 | M1 — chat, tool routing, job card, BYOK header | **done** |
+| M2 — URL → brief → script streamed into thread | **done** |
 | M1b — BYOK settings sheet, encrypted storage | next |
-| M2 — URL → brief → script streamed into thread | not started |
 | M3 — assets and local Remotion render | not started |
 | M4 — GitHub Actions renderer → public URL | not started |
 | M5 — Vercel + Neon + Inngest | not started |
 | M6 — design pass | not started |
 
-The render pipeline is **not connected yet**. A product message opens a job and
-shows the card, and the assistant says plainly that nothing will render. It never
-claims a video exists — see `RENDER_PIPELINE_CONNECTED` in `lib/ai/chat.ts`.
+A product message now really does read the site, work out what the product is, and
+write a 25-second script — streamed into the thread stage by stage. **Nothing
+renders yet**: footage and voiceover are M3, the renderer is M4. The assistant is
+told to say so and never to claim a video exists.
 
 ## Running it
 
@@ -47,8 +48,18 @@ For each capability the best available key wins: the user's, then ours, then the
 free default. Pasting a fal.ai key upgrades the hook clip and nothing else. See
 `lib/providers/keys.ts`.
 
-**The job card is a data part, not text.** It carries a stable id so the same card
-can be rewritten in place as real pipeline stages complete.
+**The job card is a data part, not text.** It carries a stable id, so the pipeline
+rewrites the same card in place as each stage lands — which is what fills the wait.
+
+**The fetcher assumes the URL is hostile.** It comes from a stranger via a model and
+is fetched server-side, so every redirect hop is DNS-resolved and screened against
+private ranges — loopback, RFC1918, carrier-grade NAT, IPv6 unique-local, and
+IPv4-mapped IPv6, which is the usual way `169.254.169.254` sneaks through. See
+`lib/product/fetch.ts`.
+
+**Proof points are copied, never invented.** The brief prompt forbids inventing a
+statistic, and the script prompt forbids using one that is not in the brief. A
+fabricated "5M users" would be worse than no number at all.
 
 ## Commands
 

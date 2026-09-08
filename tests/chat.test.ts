@@ -57,7 +57,13 @@ function userMessage(text: string): UIMessage[] {
 }
 
 async function runChat(first: LanguageModelV4StreamPart[], text: string) {
-  const stream = createChatStream({ model: mockModel(first), messages: userMessage(text) });
+  const stream = createChatStream({
+    model: mockModel(first),
+    messages: userMessage(text),
+    // Routing is what these tests are about; the pipeline is covered separately
+    // and would otherwise reach the network.
+    runPipeline: false,
+  });
   return convertReadableStreamToArray(stream);
 }
 
@@ -92,11 +98,9 @@ describe("chat routing", () => {
     expect(jobParts(chunks)).toHaveLength(0);
   });
 
-  it("does not claim a video exists while the pipeline is unconnected", async () => {
+  it("never puts a video url on the card before one exists", async () => {
     const chunks = await runChat(toolCallParts({ url: "calai.app" }), "calai.app");
     const [job] = jobParts(chunks);
     expect(job.videoUrl).toBeUndefined();
-    expect(job.status).toBe("queued");
-    expect(job.notImplemented).toBe(true);
   });
 });

@@ -1,0 +1,11 @@
+# Belt and braces: never upload local secrets to a deployment, whatever the
+# CLI's default ignore behaviour happens to be.
+.env
+.env.*
+!.env.example
+
+.agent-logs
+.renders
+node_modules
+.next
+tests
